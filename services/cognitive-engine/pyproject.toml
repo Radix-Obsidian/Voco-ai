@@ -1,0 +1,29 @@
+[project]
+name = "voco-cognitive-engine"
+version = "0.1.0"
+description = "Voco V2 Cloud Cognitive Engine — LangGraph + VAD + FastAPI WebSocket bridge"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "websockets",
+    "langgraph",
+    "langchain-core",
+    "torch",
+    "torchaudio",
+    "numpy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

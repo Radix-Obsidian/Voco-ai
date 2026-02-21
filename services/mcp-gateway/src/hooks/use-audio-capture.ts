@@ -5,12 +5,17 @@ export function useAudioCapture(
 ) {
   const [isCapturing, setIsCapturing] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
   const stopCapture = useCallback(() => {
-    processorRef.current?.disconnect();
-    processorRef.current = null;
+    workletNodeRef.current?.port.close();
+    workletNodeRef.current?.disconnect();
+    workletNodeRef.current = null;
+
+    sourceRef.current?.disconnect();
+    sourceRef.current = null;
 
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
@@ -31,25 +36,25 @@ export function useAudioCapture(
     const ctx = new AudioContext({ sampleRate: 16000 });
     audioContextRef.current = ctx;
 
-    const source = ctx.createMediaStreamSource(stream);
-    const processor = ctx.createScriptProcessor(4096, 1, 1);
-    processorRef.current = processor;
+    // Load AudioWorklet processor (512 samples = 32ms buffer)
+    await ctx.audioWorklet.addModule("/pcm-processor.js");
 
-    processor.onaudioprocess = (e) => {
-      const float32 = e.inputBuffer.getChannelData(0);
-      const int16 = new Int16Array(float32.length);
-      for (let i = 0; i < float32.length; i++) {
-        const s = Math.max(-1, Math.min(1, float32[i]));
-        int16[i] = s * 0x7fff;
-      }
-      sendAudioChunk(new Uint8Array(int16.buffer));
+    const source = ctx.createMediaStreamSource(stream);
+    sourceRef.current = source;
+
+    const workletNode = new AudioWorkletNode(ctx, "pcm-processor");
+    workletNodeRef.current = workletNode;
+
+    // Receive Int16 PCM from worklet, forward to WebSocket
+    workletNode.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
+      sendAudioChunk(new Uint8Array(e.data));
     };
 
-    source.connect(processor);
-    processor.connect(ctx.destination);
+    source.connect(workletNode);
+    // No need to connect to destination — worklet only posts messages
 
     setIsCapturing(true);
-    console.log("[AudioCapture] Started — 16kHz PCM-16 streaming");
+    console.log("[AudioCapture] Started — 16kHz PCM-16 via AudioWorklet (32ms buffer)");
   }, [sendAudioChunk]);
 
   return { isCapturing, startCapture, stopCapture };
