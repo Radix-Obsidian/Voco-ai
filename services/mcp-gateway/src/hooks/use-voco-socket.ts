@@ -38,12 +38,21 @@ export interface Proposal {
   status: "pending" | "approved" | "rejected";
 }
 
+export interface CommandProposal {
+  command_id: string;
+  command: string;
+  description: string;
+  project_path: string;
+  status: "pending" | "approved" | "rejected";
+}
+
 export function useVocoSocket() {
   const [isConnected, setIsConnected] = useState(false);
   const [bargeInActive, setBargeInActive] = useState(false);
   const [terminalOutput, setTerminalOutput] = useState<TerminalOutput | null>(null);
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [commandProposals, setCommandProposals] = useState<CommandProposal[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRequests = useRef<Map<string, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>>(new Map());
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -271,6 +280,17 @@ export function useVocoSocket() {
     setProposals([]);
   }, []);
 
+  const submitCommandDecisions = useCallback((decisions: Array<{ command_id: string; status: "approved" | "rejected" }>) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: "command_decision",
+        decisions,
+      }));
+    }
+    setCommandProposals([]);
+  }, []);
+
   const connect = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       return;
@@ -317,6 +337,17 @@ export function useVocoSocket() {
               playPcm16(merged);
             }
           }
+        } else if (msg.type === "command_proposal") {
+          setCommandProposals((prev) => [
+            ...prev,
+            {
+              command_id: msg.command_id,
+              command: msg.command,
+              description: msg.description,
+              project_path: msg.project_path,
+              status: "pending",
+            },
+          ]);
         } else if (msg.type === "proposal") {
           setProposals((prev) => [
             ...prev,
@@ -385,8 +416,10 @@ export function useVocoSocket() {
     terminalOutput,
     searchResults,
     proposals,
+    commandProposals,
     setTerminalOutput,
     setSearchResults,
     submitProposalDecisions,
+    submitCommandDecisions,
   };
 }

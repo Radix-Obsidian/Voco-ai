@@ -7,6 +7,7 @@ import { useVocoSocket } from "@/hooks/use-voco-socket";
 import { useAudioCapture } from "@/hooks/use-audio-capture";
 import { GhostTerminal } from "@/components/GhostTerminal";
 import { ReviewDeck } from "@/components/ReviewDeck";
+import { CommandApproval } from "@/components/CommandApproval";
 
 const AppPage = () => {
   const {
@@ -18,7 +19,9 @@ const AppPage = () => {
     terminalOutput,
     setTerminalOutput,
     proposals,
+    commandProposals,
     submitProposalDecisions,
+    submitCommandDecisions,
   } = useVocoSocket();
   const { isCapturing, startCapture, stopCapture } =
     useAudioCapture(isConnected ? sendAudioChunk : null);
@@ -30,6 +33,27 @@ const AppPage = () => {
 
   const handleCloseTerminal = () => {
     setTerminalOutput(null);
+  };
+
+  // Priority: CommandApproval > ReviewDeck > GhostTerminal
+  const renderOverlay = () => {
+    if (commandProposals.length > 0) {
+      return (
+        <CommandApproval
+          commands={commandProposals}
+          onSubmitDecisions={submitCommandDecisions}
+        />
+      );
+    }
+    if (proposals.length > 0) {
+      return (
+        <ReviewDeck
+          proposals={proposals}
+          onSubmitDecisions={submitProposalDecisions}
+        />
+      );
+    }
+    return <GhostTerminal output={terminalOutput} onClose={handleCloseTerminal} />;
   };
 
   return (
@@ -86,14 +110,7 @@ const AppPage = () => {
         </Card>
       </main>
 
-      {proposals.length > 0 ? (
-        <ReviewDeck
-          proposals={proposals}
-          onSubmitDecisions={submitProposalDecisions}
-        />
-      ) : (
-        <GhostTerminal output={terminalOutput} onClose={handleCloseTerminal} />
-      )}
+      {renderOverlay()}
     </div>
   );
 };

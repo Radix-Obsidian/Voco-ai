@@ -173,6 +173,78 @@ async def voco_stream(websocket: WebSocket) -> None:
                 config=config,
             )
 
+        # --- Step 2.6: Check for command sandbox interrupt ---
+        snapshot = await graph.aget_state(config)
+        if snapshot.next and "command_review_node" in snapshot.next:
+            commands = snapshot.values.get("pending_commands", [])
+            project_path = result.get("active_project_path") or os.environ.get("VOCO_PROJECT_PATH", "")
+            logger.info("[Pipeline] Command interrupt: %d commands pending approval", len(commands))
+
+            # Send each command proposal to frontend for HITL review
+            for c in commands:
+                await websocket.send_json({
+                    "type": "command_proposal",
+                    "command_id": c.get("command_id", ""),
+                    "command": c.get("command", ""),
+                    "description": c.get("description", ""),
+                    "project_path": c.get("project_path", project_path),
+                })
+
+            # TTS: announce commands
+            cmd_descs = [c.get("description", c.get("command", "")) for c in commands]
+            cmd_summary = f"I need to run {len(commands)} command{'s' if len(commands) != 1 else ''}. {'. '.join(cmd_descs)}. Approve or reject."
+            await websocket.send_json({"type": "control", "action": "tts_start", "text": cmd_summary})
+            tts_active = True
+            async for audio_chunk in tts.synthesize_stream(cmd_summary):
+                await websocket.send_bytes(audio_chunk)
+            await websocket.send_json({"type": "control", "action": "tts_end"})
+            tts_active = False
+
+            # Wait for command_decision from frontend
+            cmd_decisions = []
+            try:
+                raw = await websocket.receive_text()
+                decision_msg = json.loads(raw)
+                if decision_msg.get("type") == "command_decision":
+                    cmd_decisions = decision_msg.get("decisions", [])
+            except Exception as exc:
+                logger.warning("[Pipeline] Command decision error: %s", exc)
+
+            # For approved commands, dispatch execute_command to Tauri
+            for d in cmd_decisions:
+                if d.get("status") != "approved":
+                    continue
+                cid = d["command_id"]
+                # Find the matching command
+                cmd_data = next((c for c in commands if c.get("command_id") == cid), None)
+                if not cmd_data:
+                    continue
+                exec_rpc = {
+                    "jsonrpc": "2.0",
+                    "id": f"cmd_{cid}",
+                    "method": "local/execute_command",
+                    "params": {
+                        "command": cmd_data.get("command", ""),
+                        "project_path": cmd_data.get("project_path", project_path),
+                    },
+                }
+                await websocket.send_json(exec_rpc)
+                try:
+                    exec_resp_raw = await websocket.receive_text()
+                    exec_resp = json.loads(exec_resp_raw)
+                    cmd_output = exec_resp.get("result", exec_resp.get("error", {}).get("message", ""))
+                    d["output"] = str(cmd_output)
+                    logger.info("[Pipeline] execute_command result for %s: %.200s", cid, cmd_output)
+                except Exception as exc:
+                    d["output"] = f"execution error: {exc}"
+                    logger.warning("[Pipeline] execute_command response error: %s", exc)
+
+            # Resume graph with command decisions (including output)
+            result = await graph.ainvoke(
+                Command(resume=None, update={"command_decisions": cmd_decisions}),
+                config=config,
+            )
+
         # --- Step 3: Dispatch JSON-RPC to Tauri if tool was called ---
         pending_action = result.get("pending_mcp_action")
         if pending_action:
@@ -181,22 +253,15 @@ async def voco_stream(websocket: WebSocket) -> None:
             call_id = pending_action.get("id", "rpc-1")
 
             # Map LangGraph tool names → namespaced JSON-RPC methods (§7 contract)
-            # Note: web_search (Tavily) and GitHub tools execute server-side.
-            # Only search_codebase and execute_local_command need JSON-RPC dispatch.
+            # Note: web_search (Tavily), GitHub tools, and propose_command all
+            # execute server-side or via interrupt. Only search_codebase needs
+            # direct JSON-RPC dispatch to Tauri.
             _fallback_path = result.get("active_project_path") or os.environ.get("VOCO_PROJECT_PATH", "")
-            if tool_name == "execute_local_command":
-                method = "local/execute_command"
-                params = {
-                    "command": tool_args.get("command", ""),
-                    "project_path": tool_args.get("project_path", _fallback_path),
-                }
-            else:
-                # search_codebase — default to local ripgrep
-                method = "local/search_project"
-                params = {
-                    "pattern": tool_args.get("pattern", tool_args.get("query", "")),
-                    "project_path": _fallback_path,
-                }
+            method = "local/search_project"
+            params = {
+                "pattern": tool_args.get("pattern", tool_args.get("query", "")),
+                "project_path": _fallback_path,
+            }
 
             rpc_payload = {
                 "type": "mcp_request",

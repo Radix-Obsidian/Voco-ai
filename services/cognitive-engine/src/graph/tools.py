@@ -57,27 +57,28 @@ def get_web_search():
 
 
 @tool
-def execute_local_command(command: str, project_path: str) -> dict:
-    """Execute a local terminal command safely via the MCP bridge.
+def propose_command(command: str, description: str, project_path: str) -> dict:
+    """Propose a terminal command for the user to approve before execution.
 
-    Use this for git operations (git status, git checkout, git commit, git push),
-    running tests (npm test, cargo test, pytest), installing dependencies,
-    or any other shell command the user requests.
+    ALL shell commands must go through this tool. The command will be shown
+    to the user in the UI for approval before Rust executes it. This ensures
+    the human always stays in the loop for operations like git push, npm install,
+    database migrations, or any other terminal command.
 
     Args:
-        command: The shell command to execute (e.g. 'git status', 'npm test').
+        command: The shell command to execute (e.g. 'git push', 'npm test').
+        description: A short human-readable explanation of what this command does.
         project_path: Absolute path to the project directory to run the command in.
 
     Returns:
-        A dict encoding the JSON-RPC 2.0 request to dispatch to Tauri.
+        A command proposal dict that will be sent to the frontend for HITL approval.
     """
+    command_id = uuid.uuid4().hex[:8]
     return {
-        "jsonrpc": "2.0",
-        "method": "local/execute_command",
-        "params": {
-            "command": command,
-            "project_path": project_path,
-        },
+        "command_id": command_id,
+        "command": command,
+        "description": description,
+        "project_path": project_path,
     }
 
 
@@ -202,7 +203,7 @@ def get_all_tools():
     """Return all tools, lazily instantiating Tavily so .env is loaded first."""
     return [
         search_codebase,
-        execute_local_command,
+        propose_command,
         get_web_search(),
         github_read_issue,
         github_create_pr,

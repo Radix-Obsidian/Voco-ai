@@ -30,3 +30,5 @@ class VocoState(TypedDict):
     active_project_path: NotRequired[str]
     pending_proposals: NotRequired[list[dict]]
     proposal_decisions: NotRequired[list[dict]]
+    pending_commands: NotRequired[list[dict]]
+    command_decisions: NotRequired[list[dict]]
