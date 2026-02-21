@@ -154,6 +154,45 @@ export function useVocoSocket() {
     }
   }, [sendJsonRpcResponse, sendJsonRpcError]);
 
+  const handleExecuteCommand = useCallback(async (msg: { id: string; params: { command: string; project_path: string } }) => {
+    const { id, params } = msg;
+
+    setTerminalOutput({
+      command: `$ ${params.command}`,
+      output: "",
+      isLoading: true,
+      scope: "local",
+    });
+
+    try {
+      const result = await tauriInvoke<string>("execute_command", {
+        command: params.command,
+        projectPath: params.project_path,
+      });
+
+      setTerminalOutput({
+        command: `$ ${params.command}`,
+        output: result || "(no output)",
+        isLoading: false,
+        scope: "local",
+      });
+
+      sendJsonRpcResponse(id, result);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+
+      setTerminalOutput({
+        command: `$ ${params.command}`,
+        output: "",
+        isLoading: false,
+        scope: "local",
+        error: errorMsg,
+      });
+
+      sendJsonRpcError(id, -32000, errorMsg);
+    }
+  }, [sendJsonRpcResponse, sendJsonRpcError]);
+
   const handleWriteFile = useCallback(async (msg: { id: string; params: { file_path: string; content: string; project_root: string } }) => {
     const { id, params } = msg;
     try {
@@ -295,6 +334,8 @@ export function useVocoSocket() {
         } else if (msg.jsonrpc === "2.0" && msg.method) {
           if (msg.method === "local/search_project") {
             await handleLocalSearch(msg);
+          } else if (msg.method === "local/execute_command") {
+            await handleExecuteCommand(msg);
           } else if (msg.method === "local/write_file") {
             await handleWriteFile(msg);
           } else if (msg.method === "web/discovery") {
@@ -327,7 +368,7 @@ export function useVocoSocket() {
     };
 
     wsRef.current = ws;
-  }, [disconnect, handleLocalSearch, handleWriteFile, handleWebDiscovery]);
+  }, [disconnect, handleLocalSearch, handleExecuteCommand, handleWriteFile, handleWebDiscovery]);
 
   useEffect(() => {
     return () => {

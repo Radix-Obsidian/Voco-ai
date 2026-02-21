@@ -57,6 +57,98 @@ def get_web_search():
 
 
 @tool
+def execute_local_command(command: str, project_path: str) -> dict:
+    """Execute a local terminal command safely via the MCP bridge.
+
+    Use this for git operations (git status, git checkout, git commit, git push),
+    running tests (npm test, cargo test, pytest), installing dependencies,
+    or any other shell command the user requests.
+
+    Args:
+        command: The shell command to execute (e.g. 'git status', 'npm test').
+        project_path: Absolute path to the project directory to run the command in.
+
+    Returns:
+        A dict encoding the JSON-RPC 2.0 request to dispatch to Tauri.
+    """
+    return {
+        "jsonrpc": "2.0",
+        "method": "local/execute_command",
+        "params": {
+            "command": command,
+            "project_path": project_path,
+        },
+    }
+
+
+@tool
+def github_read_issue(repo_name: str, issue_number: int) -> str:
+    """Fetch the title, body, and labels of a GitHub issue.
+
+    Use this when the user asks you to read, check, or work on a GitHub issue.
+
+    Args:
+        repo_name: Repository in 'owner/repo' format (e.g. 'Radix-Obsidian/Voco-ai').
+        issue_number: The integer issue number.
+
+    Returns:
+        A formatted string with the issue title, labels, and body.
+    """
+    from github import Github
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        return "Error: GITHUB_TOKEN environment variable is not set."
+
+    g = Github(token)
+    try:
+        repo = g.get_repo(repo_name)
+        issue = repo.get_issue(number=issue_number)
+        labels = ", ".join(l.name for l in issue.labels) or "none"
+        return f"Issue #{issue.number}: {issue.title}\nLabels: {labels}\n\n{issue.body or '(no body)'}"
+    except Exception as e:
+        return f"Failed to fetch issue: {e}"
+
+
+@tool
+def github_create_pr(
+    repo_name: str,
+    title: str,
+    body: str,
+    head_branch: str,
+    base_branch: str = "main",
+) -> str:
+    """Create a Pull Request on GitHub.
+
+    Before calling this, ensure the code has been committed and pushed to
+    head_branch using execute_local_command.
+
+    Args:
+        repo_name: Repository in 'owner/repo' format.
+        title: PR title.
+        body: PR description / body (markdown).
+        head_branch: The branch with the changes.
+        base_branch: The target branch to merge into (default: main).
+
+    Returns:
+        Success message with PR number and URL, or error message.
+    """
+    from github import Github
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        return "Error: GITHUB_TOKEN environment variable is not set."
+
+    g = Github(token)
+    try:
+        repo = g.get_repo(repo_name)
+        pr = repo.create_pull(title=title, body=body, head=head_branch, base=base_branch)
+        return f"Created PR #{pr.number}: {pr.html_url}"
+    except Exception as e:
+        return f"Failed to create PR: {e}"
+
+
+@tool
 def propose_file_creation(file_path: str, content: str, description: str) -> dict:
     """Propose creating a new file in the user's project.
 
@@ -108,4 +200,12 @@ def propose_file_edit(file_path: str, diff: str, description: str) -> dict:
 
 def get_all_tools():
     """Return all tools, lazily instantiating Tavily so .env is loaded first."""
-    return [search_codebase, get_web_search(), propose_file_creation, propose_file_edit]
+    return [
+        search_codebase,
+        execute_local_command,
+        get_web_search(),
+        github_read_issue,
+        github_create_pr,
+        propose_file_creation,
+        propose_file_edit,
+    ]

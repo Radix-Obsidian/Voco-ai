@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for Voco MCP Gateway — Zero-Trust search scope",
+  "description": "Default capability for Voco MCP Gateway — Zero-Trust search + execution scope",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -20,6 +20,16 @@
             { "validator": "\\S+" },
             { "validator": "^([A-Za-z]:\\\\|/).*$" }
           ]
+        },
+        {
+          "name": "cmd",
+          "cmd": "cmd",
+          "args": true
+        },
+        {
+          "name": "sh",
+          "cmd": "sh",
+          "args": true
         }
       ]
     }

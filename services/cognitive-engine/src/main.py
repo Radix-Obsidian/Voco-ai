@@ -181,14 +181,22 @@ async def voco_stream(websocket: WebSocket) -> None:
             call_id = pending_action.get("id", "rpc-1")
 
             # Map LangGraph tool names → namespaced JSON-RPC methods (§7 contract)
-            # Note: web_search (Tavily) executes server-side — only search_codebase
-            # needs JSON-RPC dispatch to Tauri.
+            # Note: web_search (Tavily) and GitHub tools execute server-side.
+            # Only search_codebase and execute_local_command need JSON-RPC dispatch.
             _fallback_path = result.get("active_project_path") or os.environ.get("VOCO_PROJECT_PATH", "")
-            method = "local/search_project"
-            params = {
-                "pattern": tool_args.get("pattern", tool_args.get("query", "")),
-                "project_path": _fallback_path,
-            }
+            if tool_name == "execute_local_command":
+                method = "local/execute_command"
+                params = {
+                    "command": tool_args.get("command", ""),
+                    "project_path": tool_args.get("project_path", _fallback_path),
+                }
+            else:
+                # search_codebase — default to local ripgrep
+                method = "local/search_project"
+                params = {
+                    "pattern": tool_args.get("pattern", tool_args.get("query", "")),
+                    "project_path": _fallback_path,
+                }
 
             rpc_payload = {
                 "type": "mcp_request",

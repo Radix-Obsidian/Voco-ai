@@ -5,7 +5,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![commands::search_project, commands::write_file])
+        .invoke_handler(tauri::generate_handler![commands::search_project, commands::write_file, commands::execute_command])
         .run(tauri::generate_context!())
         .expect("error while running Voco MCP Gateway");
 }

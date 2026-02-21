@@ -3,6 +3,69 @@ use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri_plugin_shell::ShellExt;
 
+/// Execute a shell command within an authorized project directory.
+///
+/// # Security — Double-Lock
+/// - `project_path` must be absolute and canonicalizable.
+/// - Command runs with `current_dir` locked to the project path.
+/// - Selects `cmd /C` on Windows, `sh -c` on Unix.
+#[tauri::command]
+pub async fn execute_command(
+    app: AppHandle,
+    command: String,
+    project_path: PathBuf,
+) -> Result<String, String> {
+    if !project_path.is_absolute() {
+        return Err(format!(
+            "project_path must be absolute: '{}'",
+            project_path.display()
+        ));
+    }
+
+    let canonical_path = project_path
+        .canonicalize()
+        .map_err(|e| format!("Cannot canonicalize project_path: {e}"))?;
+
+    let path_str = canonical_path
+        .to_str()
+        .ok_or_else(|| "Invalid project path encoding".to_string())?;
+
+    // Select shell based on OS
+    #[cfg(target_os = "windows")]
+    let output = app
+        .shell()
+        .command("cmd")
+        .args(["/C", &command])
+        .current_dir(path_str)
+        .output()
+        .await
+        .map_err(|e| format!("Command execution failed: {e}"))?;
+
+    #[cfg(not(target_os = "windows"))]
+    let output = app
+        .shell()
+        .command("sh")
+        .args(["-c", &command])
+        .current_dir(path_str)
+        .output()
+        .await
+        .map_err(|e| format!("Command execution failed: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    if !output.status.success() {
+        return Err(format!(
+            "Command failed (exit {:?})\nstdout: {}\nstderr: {}",
+            output.status.code(),
+            stdout,
+            stderr
+        ));
+    }
+
+    Ok(format!("{}\n{}", stdout, stderr).trim().to_string())
+}
+
 /// Write content to a file within a project directory.
 ///
 /// # Security
