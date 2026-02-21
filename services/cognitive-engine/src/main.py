@@ -8,8 +8,10 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from langchain_core.messages import HumanMessage
 
 from src.audio.vad import VocoVADStreamer, load_silero_model
+from src.graph.router import graph
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,12 @@ async def voco_stream(websocket: WebSocket) -> None:
 
     async def _on_turn_end() -> None:
         await websocket.send_json({"type": "control", "action": "turn_ended"})
+        config = {"configurable": {"thread_id": "main-session"}}
+        result = await graph.ainvoke(
+            {"messages": [HumanMessage(content="User stopped speaking. [MOCK STT]")]},
+            config=config,
+        )
+        print("[LangGraph] Graph output:", result)
 
     vad.on_barge_in = _on_barge_in
     vad.on_turn_end = _on_turn_end
