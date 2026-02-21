@@ -1,0 +1,17 @@
+# Environment — never commit secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+dist/
+*.egg-info/
+
+# uv
+uv.lock
+
+# Test artifacts
+.pytest_cache/
+.coverage

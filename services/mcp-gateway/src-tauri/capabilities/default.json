@@ -1,0 +1,27 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability for Voco MCP Gateway — Zero-Trust search scope",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "fs:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/rg",
+          "sidecar": true,
+          "args": [
+            { "validator": "^--[a-zA-Z][a-zA-Z0-9-]*$" },
+            { "validator": "^--[a-zA-Z][a-zA-Z0-9-]*$" },
+            { "validator": "^--[a-zA-Z][a-zA-Z0-9-]*$" },
+            { "validator": "^--[a-zA-Z][a-zA-Z0-9-]*$" },
+            { "validator": "\\S+" },
+            { "validator": "^([A-Za-z]:\\\\|/).*$" }
+          ]
+        }
+      ]
+    }
+  ]
+}

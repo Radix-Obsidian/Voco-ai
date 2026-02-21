@@ -9,9 +9,12 @@ dependencies = [
     "websockets",
     "langgraph",
     "langchain-core",
+    "langchain-anthropic",
     "torch",
     "torchaudio",
     "numpy",
+    "httpx[ws]",
+    "python-dotenv",
 ]
 
 [project.optional-dependencies]

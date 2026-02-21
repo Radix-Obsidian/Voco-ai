@@ -8,9 +8,12 @@ from .state import VocoState
 
 
 def _route_after_orchestrator(state: VocoState) -> str:
-    if state["barge_in_detected"]:
+    """Route based on barge-in flag and whether Claude requested a tool call."""
+    if state.get("barge_in_detected"):
         return "orchestrator_node"
-    return "mcp_gateway_node"
+    if state.get("pending_mcp_action"):
+        return "mcp_gateway_node"
+    return END
 
 
 builder = StateGraph(VocoState)
@@ -25,6 +28,7 @@ builder.add_conditional_edges(
     {
         "orchestrator_node": "orchestrator_node",
         "mcp_gateway_node": "mcp_gateway_node",
+        END: END,
     },
 )
 builder.add_edge("mcp_gateway_node", END)

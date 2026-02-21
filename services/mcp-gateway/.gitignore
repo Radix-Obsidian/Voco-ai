@@ -1,3 +1,12 @@
+# Tauri build artifacts
+src-tauri/target/
+src-tauri/binaries/*.exe
+src-tauri/binaries/rg-*
+!src-tauri/binaries/.gitkeep
+
+# Environment
+.env
+
 # Logs
 logs
 *.log
