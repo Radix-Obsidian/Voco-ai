@@ -1,11 +1,53 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 
-const WS_URL = "ws://localhost:8000/ws/voco-stream";
+const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (!isTauri()) {
+    throw new Error(`[Voco] Not running inside Tauri — cannot invoke "${cmd}". Open via Tauri desktop app.`);
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(cmd, args);
+}
+
+const WS_URL = "ws://localhost:8001/ws/voco-stream";
+
+export interface TerminalOutput {
+  command: string;
+  output: string;
+  isLoading: boolean;
+  scope: "local" | "web" | "hybrid";
+  error?: string;
+}
+
+export interface SearchResult {
+  id: string;
+  scope: string;
+  localResults?: string;
+  webResults?: string;
+}
+
+export interface Proposal {
+  proposal_id: string;
+  action: "create_file" | "edit_file";
+  file_path: string;
+  content?: string;
+  diff?: string;
+  description: string;
+  project_root: string;
+  status: "pending" | "approved" | "rejected";
+}
 
 export function useVocoSocket() {
   const [isConnected, setIsConnected] = useState(false);
   const [bargeInActive, setBargeInActive] = useState(false);
+  const [terminalOutput, setTerminalOutput] = useState<TerminalOutput | null>(null);
+  const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
+  const [proposals, setProposals] = useState<Proposal[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
+  const pendingRequests = useRef<Map<string, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>>(new Map());
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const audioChunksRef = useRef<Uint8Array[]>([]);
 
   const sendAudioChunk = useCallback((bytes: Uint8Array) => {
     const ws = wsRef.current;
@@ -19,10 +61,178 @@ export function useVocoSocket() {
       wsRef.current.close();
       wsRef.current = null;
     }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close();
+      audioCtxRef.current = null;
+    }
+  }, []);
+
+  const ensureAudioContext = useCallback(() => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new AudioContext({ sampleRate: 16000 });
+    }
+    return audioCtxRef.current;
+  }, []);
+
+  const playPcm16 = useCallback(async (pcm: Uint8Array) => {
+    if (!pcm.length) return;
+    const ctx = ensureAudioContext();
+
+    // Convert Int16 PCM to Float32 for WebAudio
+    const samples = new Float32Array(pcm.length / 2);
+    for (let i = 0; i < samples.length; i++) {
+      const lo = pcm[i * 2];
+      const hi = pcm[i * 2 + 1];
+      const int16 = (hi << 8) | lo;
+      samples[i] = (int16 > 0x7fff ? int16 - 0x10000 : int16) / 0x8000;
+    }
+
+    const buffer = ctx.createBuffer(1, samples.length, 16000);
+    buffer.copyToChannel(samples, 0, 0);
+
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+    source.start();
+  }, [ensureAudioContext]);
+
+  const sendJsonRpcResponse = useCallback((id: string, result: unknown) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
+    }
+  }, []);
+
+  const sendJsonRpcError = useCallback((id: string, code: number, message: string, data?: unknown) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        error: { code, message, data }
+      }));
+    }
+  }, []);
+
+  const handleLocalSearch = useCallback(async (msg: { id: string; params: { pattern: string; project_path: string } }) => {
+    const { id, params } = msg;
+
+    setTerminalOutput({
+      command: `$ rg --pattern "${params.pattern}" ${params.project_path}`,
+      output: "",
+      isLoading: true,
+      scope: "local"
+    });
+
+    try {
+      const result = await tauriInvoke<string>("search_project", {
+        pattern: params.pattern,
+        projectPath: params.project_path
+      });
+
+      setTerminalOutput({
+        command: `$ rg --pattern "${params.pattern}" ${params.project_path}`,
+        output: result || "No matches found",
+        isLoading: false,
+        scope: "local"
+      });
+
+      setSearchResults({ id, scope: "local", localResults: result });
+      sendJsonRpcResponse(id, result);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+
+      setTerminalOutput({
+        command: `$ rg --pattern "${params.pattern}" ${params.project_path}`,
+        output: "",
+        isLoading: false,
+        scope: "local",
+        error: errorMsg
+      });
+
+      sendJsonRpcError(id, -32000, errorMsg);
+    }
+  }, [sendJsonRpcResponse, sendJsonRpcError]);
+
+  const handleWriteFile = useCallback(async (msg: { id: string; params: { file_path: string; content: string; project_root: string } }) => {
+    const { id, params } = msg;
+    try {
+      const result = await tauriInvoke<string>("write_file", {
+        filePath: params.file_path,
+        content: params.content,
+        projectRoot: params.project_root,
+      });
+      sendJsonRpcResponse(id, result);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      sendJsonRpcError(id, -32000, errorMsg);
+    }
+  }, [sendJsonRpcResponse, sendJsonRpcError]);
+
+  const handleWebDiscovery = useCallback(async (msg: { id: string; params: { query: string } }) => {
+    const { id, params } = msg;
+
+    setTerminalOutput({
+      command: `$ webmcp --query "${params.query}"`,
+      output: "",
+      isLoading: true,
+      scope: "web"
+    });
+
+    try {
+      if (typeof navigator !== "undefined" && navigator.modelContext) {
+        const results = await navigator.modelContext.callTool({
+          name: "web_search",
+          input: { query: params.query }
+        });
+
+        setTerminalOutput({
+          command: `$ webmcp --query "${params.query}"`,
+          output: JSON.stringify(results, null, 2),
+          isLoading: false,
+          scope: "web"
+        });
+
+        setSearchResults({ id, scope: "web", webResults: JSON.stringify(results) });
+        sendJsonRpcResponse(id, results);
+      } else {
+        const errorMsg = "WebMCP not available in this context";
+        setTerminalOutput({
+          command: `$ webmcp --query "${params.query}"`,
+          output: "",
+          isLoading: false,
+          scope: "web",
+          error: errorMsg
+        });
+        sendJsonRpcError(id, -32001, errorMsg);
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+
+      setTerminalOutput({
+        command: `$ webmcp --query "${params.query}"`,
+        output: "",
+        isLoading: false,
+        scope: "web",
+        error: errorMsg
+      });
+
+      sendJsonRpcError(id, -32000, errorMsg);
+    }
+  }, [sendJsonRpcResponse, sendJsonRpcError]);
+
+  const submitProposalDecisions = useCallback((decisions: Array<{ proposal_id: string; status: "approved" | "rejected" }>) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: "proposal_decision",
+        decisions,
+      }));
+    }
+    setProposals([]);
   }, []);
 
   const connect = useCallback(() => {
-    // Avoid duplicate connections
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       return;
     }
@@ -35,19 +245,75 @@ export function useVocoSocket() {
       console.log("[VocoSocket] Connected to", WS_URL);
     };
 
-    ws.onmessage = (event) => {
+    ws.onmessage = async (event) => {
+      // Handle binary TTS audio frames
+      if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
+        const buf = event.data instanceof Blob ? new Uint8Array(await event.data.arrayBuffer()) : new Uint8Array(event.data);
+        audioChunksRef.current.push(buf);
+        return;
+      }
+
       try {
         const msg = JSON.parse(event.data);
+
         if (msg.type === "control") {
           if (msg.action === "halt_audio_playback") {
             setBargeInActive(true);
             console.log("[Barge-in] Halting audio!");
           } else if (msg.action === "turn_ended") {
             setBargeInActive(false);
+          } else if (msg.action === "tts_start") {
+            audioChunksRef.current = [];
+          } else if (msg.action === "tts_end") {
+            const chunks = audioChunksRef.current;
+            audioChunksRef.current = [];
+            const total = chunks.reduce((acc, c) => acc + c.length, 0);
+            if (total > 0) {
+              const merged = new Uint8Array(total);
+              let offset = 0;
+              for (const c of chunks) {
+                merged.set(c, offset);
+                offset += c.length;
+              }
+              playPcm16(merged);
+            }
+          }
+        } else if (msg.type === "proposal") {
+          setProposals((prev) => [
+            ...prev,
+            {
+              proposal_id: msg.proposal_id,
+              action: msg.action,
+              file_path: msg.file_path,
+              content: msg.content,
+              diff: msg.diff,
+              description: msg.description,
+              project_root: msg.project_root,
+              status: "pending",
+            },
+          ]);
+        } else if (msg.jsonrpc === "2.0" && msg.method) {
+          if (msg.method === "local/search_project") {
+            await handleLocalSearch(msg);
+          } else if (msg.method === "local/write_file") {
+            await handleWriteFile(msg);
+          } else if (msg.method === "web/discovery") {
+            await handleWebDiscovery(msg);
+          }
+        } else if (msg.jsonrpc === "2.0" && msg.id) {
+          const pending = pendingRequests.current.get(msg.id);
+          if (pending) {
+            if (msg.error) {
+              pending.reject(msg.error);
+            } else {
+              pending.resolve(msg.result);
+            }
+            pendingRequests.current.delete(msg.id);
           }
         }
-      } catch {
-        // Binary or non-JSON frame — ignore
+      } catch (err) {
+        // Non-JSON frame or parse error — ignore
+        console.warn("[VocoSocket] Message parse error:", err);
       }
     };
 
@@ -61,14 +327,25 @@ export function useVocoSocket() {
     };
 
     wsRef.current = ws;
-  }, [disconnect]);
+  }, [disconnect, handleLocalSearch, handleWriteFile, handleWebDiscovery]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       wsRef.current?.close();
     };
   }, []);
 
-  return { isConnected, bargeInActive, sendAudioChunk, connect, disconnect };
+  return {
+    isConnected,
+    bargeInActive,
+    sendAudioChunk,
+    connect,
+    disconnect,
+    terminalOutput,
+    searchResults,
+    proposals,
+    setTerminalOutput,
+    setSearchResults,
+    submitProposalDecisions,
+  };
 }

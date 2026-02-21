@@ -10,6 +10,7 @@ dependencies = [
     "langgraph",
     "langchain-core",
     "langchain-anthropic",
+    "langchain-tavily",
     "torch",
     "torchaudio",
     "numpy",

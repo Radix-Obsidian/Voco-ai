@@ -5,18 +5,32 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
 import { useVocoSocket } from "@/hooks/use-voco-socket";
 import { useAudioCapture } from "@/hooks/use-audio-capture";
+import { GhostTerminal } from "@/components/GhostTerminal";
+import { ReviewDeck } from "@/components/ReviewDeck";
 
 const AppPage = () => {
-  const { isConnected, bargeInActive, sendAudioChunk, connect, disconnect } =
-    useVocoSocket();
+  const {
+    isConnected,
+    bargeInActive,
+    sendAudioChunk,
+    connect,
+    disconnect,
+    terminalOutput,
+    setTerminalOutput,
+    proposals,
+    submitProposalDecisions,
+  } = useVocoSocket();
   const { isCapturing, startCapture, stopCapture } =
     useAudioCapture(isConnected ? sendAudioChunk : null);
 
-  // Auto-connect WebSocket on mount
   useEffect(() => {
     connect();
     return () => disconnect();
   }, [connect, disconnect]);
+
+  const handleCloseTerminal = () => {
+    setTerminalOutput(null);
+  };
 
   return (
     <div className="noise-overlay min-h-screen bg-background text-foreground">
@@ -71,6 +85,15 @@ const AppPage = () => {
           </CardFooter>
         </Card>
       </main>
+
+      {proposals.length > 0 ? (
+        <ReviewDeck
+          proposals={proposals}
+          onSubmitDecisions={submitProposalDecisions}
+        />
+      ) : (
+        <GhostTerminal output={terminalOutput} onClose={handleCloseTerminal} />
+      )}
     </div>
   );
 };

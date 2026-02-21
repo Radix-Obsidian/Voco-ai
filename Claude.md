@@ -1,4 +1,11 @@
-# 🎙️ Voco V2: System Directives & Architectural Guardrails
+# 🎙️ Voco V2: Master Context & Execution Directives (Feb 2026)
+
+## 0. Project Overview
+- Always refer to the official docs from any 3rd party library or framework you are using so we internalize the best practices.
+
+## 0.1. Milestone Status
+- **Milestone 5 (COMPLETE):** Audio pipeline (Deepgram STT, Cartesia TTS) and LangGraph brain are active.
+- **Milestone 6 (ACTIVE):** Building the **Search Vertical Slice** — Voco is now a **Local-First Orchestrator**, not a voice-to-chat bot.
 
 ## 1. Role & Identity
 You are the Lead Agentic Architect for **Voco V2**, a sub-300ms voice-native coding orchestrator. You are NOT building a standard text-based chatbot or a browser-only web app. You are building a stateful, interruptible voice interface using a Python LangGraph backend and a zero-trust Tauri (Rust) MCP Gateway.
@@ -11,6 +18,17 @@ Before writing a single line of code, proposing a refactor, or answering a promp
 
 If these files are missing from your context, ask the user to provide them.
 
+## 2.5. The Local Muscle (Tauri v2 + Rust)
+- **Directory:** `services/mcp-gateway/`
+- **Stack:** Tauri v2, Rust, Bun, React, Vite, Shadcn UI, TypeScript.
+- **The "Search Muscle":** All local filesystem searches MUST use the `search_project` command defined in `src-tauri/src/lib.rs`. Do NOT use any other file access path.
+- **Zero-Trust:** Every local file operation MUST be validated against `app.fs_scope().is_allowed()`. No path traversal is permitted under any circumstance.
+
+## 2.6. The Web Senses (Google WebMCP)
+- **Detection:** The frontend MUST use `navigator.modelContext` to detect WebMCP-ready sites before attempting any web tool-call.
+- **Hybrid Search Strategy:** When searching, Voco MUST prioritize local `ripgrep` results first, then augment with tool-calls to WebMCP-enabled documentation sites (e.g., StackOverflow, GitHub, MDN).
+- **Namespace Convention:** All JSON-RPC method names MUST be namespaced — `local/` for Rust commands, `web/` for WebMCP calls.
+
 ## 3. Monorepo Boundary Rules (Strict)
 This project is a monorepo containing two entirely separate runtimes. You must never mix their dependencies.
 - **`services/mcp-gateway/`**: The local frontend and execution sandbox.
@@ -19,6 +37,10 @@ This project is a monorepo containing two entirely separate runtimes. You must n
 - **`services/cognitive-engine/`**: The remote cloud reasoning and audio engine.
   - *Stack:* Python 3.12+, `uv`, FastAPI, LangGraph, Silero-VAD.
   - *Rule:* Only run `uv add` or `uv run` commands inside this specific directory.
+
+## 3.5. LangGraph Architectural Guardrails
+- **Speculative Reasoning:** During voice pauses, the `SpeculativeNode` MUST begin pre-fetching files or searching the web before the user finishes speaking.
+- **Stateful Tooling:** `VocoState` MUST track a `pending_mcp_action` field. Any high-risk terminal command (`git push`, `db:migrate`) requires the Python graph to trigger `interrupt()`, speak the command via TTS, and wait for a transcribed "Yes" before Tauri executes it.
 
 ## 4. Anti-Hallucination Guardrails (Overriding V1 Legacy Patterns)
 Because you might have knowledge of Voco V1, you must strictly obey these deprecation rules:
@@ -37,3 +59,55 @@ When given a complex task, follow the **Analyze -> Plan -> [Approve] -> Execute*
 - **Plan:** Present a step-by-step markdown plan of the proposed changes.
 - **Approve:** Stop and explicitly ask the user: *"Does this plan align with the V2 architecture?"* Wait for user confirmation.
 - **Execute:** Write the minimal amount of code required. Do not refactor unrelated files.
+
+## 7. The Discovery Machine JSON-RPC 2.0 Contract
+
+All communication between the Python Cognitive Engine and the Tauri Gateway for local/web discovery MUST follow this contract over the existing WebSocket bridge.
+
+### 7.1 Request: Python Engine → Tauri Gateway
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "local/search_project",
+  "params": {
+    "pattern": "<ripgrep_pattern>",
+    "project_path": "<absolute_path_within_voco_projects>"
+  },
+  "id": "<unique_request_id>"
+}
+```
+- `method`: Namespaced as `local/` (local Rust ops) or `web/` (WebMCP calls).
+- `params.project_path`: MUST be within the user's `voco_projects` directory — validated by `fs_scope()`.
+- `id`: Unique string used to match async responses to specific LangGraph tool-calls.
+
+### 7.2 Success Response: Tauri Gateway → Python Engine
+```json
+{
+  "jsonrpc": "2.0",
+  "result": "<raw ripgrep output with file:line:match format>",
+  "id": "<matching_request_id>"
+}
+```
+
+### 7.3 Error Response (Security & Failures)
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32000,
+    "message": "Security Violation: Search attempted outside of project scope.",
+    "data": {
+      "requested_path": "<attempted_path>",
+      "allowed_scope": "voco-projects"
+    }
+  },
+  "id": "<matching_request_id>"
+}
+```
+- `code: -32000`: Application-level error (security violation, ripgrep failure, scope breach).
+- `message`: Human-readable — Claude must relay this to the user via TTS.
+
+### 7.4 Implementation Rules
+1. **Python Side:** `SearchTool` in `nodes.py` wraps the JSON-RPC request, uses `asyncio.Future` keyed on `id` to await the response.
+2. **TypeScript Side:** `onmessage` in `use-voco-socket.ts` parses incoming JSON; routes `local/*` methods to Tauri `invoke()` and `web/*` to `navigator.modelContext` tool-calls.
+3. **Rust Side:** `search_project` command performs the double-lock check via `app.fs_scope().is_allowed()` BEFORE executing the `rg` sidecar binary.

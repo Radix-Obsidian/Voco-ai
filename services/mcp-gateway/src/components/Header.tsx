@@ -16,7 +16,11 @@ const Header = ({ onOpenHistory, onOpenSettings }: HeaderProps) => {
             <Clock className="h-4 w-4" />
           </Button>
         )}
-        <img src={vocoLogo} alt="Voco" className="h-10 w-auto" />
+        <img
+          src={vocoLogo}
+          alt="Voco"
+          className="h-12 w-auto max-w-[200px]"
+        />
       </div>
       {onOpenSettings && (
         <Button variant="ghost" size="icon" onClick={onOpenSettings} className="text-muted-foreground opacity-40 hover:opacity-100 transition-opacity h-8 w-8">
