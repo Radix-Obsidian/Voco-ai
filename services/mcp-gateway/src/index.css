@@ -1,0 +1,117 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 4%;
+    --foreground: 0 0% 100%;
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 8%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 151 100% 52%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 90%;
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 0 0% 10%;
+    --accent-foreground: 0 0% 90%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 15%;
+    --input: 0 0% 15%;
+    --ring: 151 100% 52%;
+    --radius: 0.5rem;
+    --sidebar-background: 0 0% 4%;
+    --sidebar-foreground: 0 0% 90%;
+    --sidebar-primary: 0 0% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 0 0% 10%;
+    --sidebar-accent-foreground: 0 0% 90%;
+    --sidebar-border: 0 0% 15%;
+    --sidebar-ring: 151 100% 52%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Noise grain overlay */
+.noise-overlay::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.07;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+/* Shimmer text animation for idle status */
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.text-shimmer {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted-foreground)) 0%,
+    hsl(var(--foreground)) 50%,
+    hsl(var(--muted-foreground)) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 3s linear infinite;
+}
+
+/* Article prose styles */
+.article-prose h1 {
+  @apply text-3xl md:text-4xl font-bold tracking-tight text-foreground mb-6;
+}
+.article-prose h2 {
+  @apply text-2xl font-semibold text-foreground mt-12 mb-4;
+}
+.article-prose h3 {
+  @apply text-xl font-semibold text-foreground mt-10 mb-3;
+}
+.article-prose h4 {
+  @apply text-lg font-semibold text-foreground mt-8 mb-2;
+}
+.article-prose p {
+  @apply text-base leading-relaxed text-secondary-foreground mb-5;
+}
+.article-prose a {
+  @apply text-primary underline underline-offset-4 hover:opacity-80 transition-opacity;
+}
+.article-prose strong {
+  @apply text-foreground font-semibold;
+}
+.article-prose ul {
+  @apply list-disc pl-6 mb-5 space-y-1;
+}
+.article-prose li {
+  @apply text-secondary-foreground leading-relaxed;
+}
+.article-prose pre {
+  @apply bg-card border border-border rounded-lg p-4 overflow-x-auto mb-6 text-sm;
+}
+.article-prose code {
+  @apply font-mono text-primary;
+}
+.article-prose pre code {
+  @apply text-foreground bg-transparent p-0;
+}

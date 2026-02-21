@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+Docs/Keys.md
+
+# IDE & editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# V1 reference (not part of V2 source)
+Voco-v1-repo*/
+
+# Claude Code internal
+.claude/
+
+# Python (cognitive-engine)
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+
+# Tauri
+target/
