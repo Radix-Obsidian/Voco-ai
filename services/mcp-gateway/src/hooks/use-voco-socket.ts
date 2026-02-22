@@ -392,6 +392,44 @@ export function useVocoSocket() {
               status: "pending",
             },
           ]);
+        } else if (msg.type === "screen_capture_request") {
+          // Phase 3: Voco Eyes — capture recent screen frames and send back
+          const requestId: string = msg.id ?? "";
+          try {
+            const frames = await tauriInvoke<string[]>("get_recent_frames");
+            ws.send(JSON.stringify({
+              type: "screen_frames",
+              id: requestId,
+              frames,
+              media_type: "image/jpeg",
+            }));
+            console.log(`[VocoEyes] Sent ${frames.length} frame(s) to Python.`);
+          } catch (err) {
+            // Send an empty frames array so Python can respond gracefully
+            ws.send(JSON.stringify({ type: "screen_frames", id: requestId, frames: [], media_type: "image/jpeg" }));
+            console.warn("[VocoEyes] get_recent_frames failed:", err);
+          }
+        } else if (msg.type === "scan_security_request") {
+          // Phase 4: Voco Auto-Sec — run local security scan via Rust and send findings back
+          const requestId: string = msg.id ?? "";
+          const projectPath: string = msg.project_path ?? "";
+          try {
+            const raw = await tauriInvoke<string>("scan_security", { projectPath });
+            const findings = JSON.parse(raw);
+            ws.send(JSON.stringify({
+              type: "scan_security_result",
+              id: requestId,
+              findings,
+            }));
+            console.log("[AutoSec] Security scan complete, findings sent to Python.");
+          } catch (err) {
+            ws.send(JSON.stringify({
+              type: "scan_security_result",
+              id: requestId,
+              findings: { error: String(err) },
+            }));
+            console.warn("[AutoSec] scan_security failed:", err);
+          }
         } else if (msg.jsonrpc === "2.0" && msg.method) {
           if (msg.method === "local/search_project") {
             await handleLocalSearch(msg);

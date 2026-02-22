@@ -80,7 +80,9 @@ _SYSTEM_PROMPT = (
     "3. tavily_search — look up current documentation, library updates, or external knowledge on the web.\n"
     "4. github_read_issue — fetch a GitHub issue's title, body, and labels.\n"
     "5. github_create_pr — open a Pull Request on GitHub.\n"
-    "6. propose_file_creation / propose_file_edit — propose file changes for user review before writing.\n\n"
+    "6. propose_file_creation / propose_file_edit — propose file changes for user review before writing.\n"
+    "7. analyze_screen — visually inspect the user's screen to diagnose UI bugs.\n"
+    "8. scan_vulnerabilities — scan the project for exposed secrets and vulnerable dependencies (local, instant).\n\n"
     "Async Execution Model (CRITICAL):\n"
     "- You are an autonomous Intent OS. All tools execute asynchronously in the background.\n"
     "- When you call a tool, you will receive an IMMEDIATE confirmation: "
@@ -98,46 +100,115 @@ _SYSTEM_PROMPT = (
     "- Be concise — your responses are spoken aloud via TTS."
 )
 
-_model_with_tools = None
-_bound_tool_count = 0
+# ---------------------------------------------------------------------------
+# Phase 2: Boss Router — model registry
+# ---------------------------------------------------------------------------
+
+_BOSS_CLASSIFY_PROMPT = (
+    "You are a task classifier for Voco, a voice coding assistant.\n"
+    "Classify the user's request as ONE of two routes:\n"
+    "- haiku  — Simple/conversational: greetings, short explanations, status checks, "
+    "questions answerable without tools, no code required.\n"
+    "- sonnet — Complex/technical: code writing, debugging, file edits, terminal commands, "
+    "GitHub operations, web search, multi-step reasoning, any tool use.\n\n"
+    "Reply with ONLY the single word 'haiku' or 'sonnet'. No punctuation. No explanation."
+)
+
+_sonnet_model = None
+_sonnet_tool_count = 0
+_haiku_model = None
 
 
-def _get_model():
-    """Lazily create the Claude model, re-binding tools when the registry grows."""
-    global _model_with_tools, _bound_tool_count
-
+def _get_sonnet():
+    """Lazily return claude-sonnet-4-5 bound to all tools."""
+    global _sonnet_model, _sonnet_tool_count
     all_tools = get_all_tools()
-    if _model_with_tools is None or len(all_tools) != _bound_tool_count:
+    if _sonnet_model is None or len(all_tools) != _sonnet_tool_count:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
-            raise RuntimeError(
-                "ANTHROPIC_API_KEY is not set. Check .env in services/cognitive-engine/"
-            )
-        _model_with_tools = ChatAnthropic(
+            raise RuntimeError("ANTHROPIC_API_KEY is not set.")
+        _sonnet_model = ChatAnthropic(
             model="claude-sonnet-4-5-20250929",
             temperature=0,
             api_key=api_key,
         ).bind_tools(all_tools)
-        _bound_tool_count = len(all_tools)
-        logger.info("[Model] Bound %d tools (including %d external MCP tools).",
-                     _bound_tool_count, _bound_tool_count - 7)
-    return _model_with_tools
+        _sonnet_tool_count = len(all_tools)
+        logger.info("[Model] Sonnet bound with %d tools.", _sonnet_tool_count)
+    return _sonnet_model
+
+
+def _get_haiku():
+    """Lazily return claude-haiku-4-5 (no tools — fast conversational responses)."""
+    global _haiku_model
+    if _haiku_model is None:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY is not set.")
+        _haiku_model = ChatAnthropic(
+            model="claude-haiku-4-5-20251001",
+            temperature=0,
+            api_key=api_key,
+        )
+        logger.info("[Model] Haiku ready (conversational fast-path).")
+    return _haiku_model
+
+
+def _get_boss():
+    """Lazily return the Haiku classifier (no tools — classification only)."""
+    return _get_haiku()
+
+
+# ---------------------------------------------------------------------------
+# Boss Router node
+# ---------------------------------------------------------------------------
+
+
+async def boss_router_node(state: VocoState) -> dict:
+    """Use Claude Haiku to classify the task and pick the right execution model.
+
+    Routes:
+      haiku  → simple/conversational, no tools needed  → fast + cheap
+      sonnet → technical/code/tool-use                 → full capability
+    """
+    messages = state.get("messages", [])
+    if not messages:
+        return {"routed_model": "sonnet"}
+
+    last_text = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
+
+    try:
+        boss = _get_boss()
+        response: AIMessage = await boss.ainvoke(
+            [SystemMessage(content=_BOSS_CLASSIFY_PROMPT),
+             *[m for m in messages[-6:]]]  # only last 6 messages for speed
+        )
+        route = response.content.strip().lower().split()[0] if response.content else "sonnet"
+        route = route if route in ("haiku", "sonnet") else "sonnet"
+    except Exception as exc:
+        logger.warning("[Boss Router] Classification failed, defaulting to sonnet: %s", exc)
+        route = "sonnet"
+
+    logger.info("[Boss Router 🧠] '%s...' → %s", last_text[:60], route.upper())
+    return {"routed_model": route}
 
 
 async def orchestrator_node(state: VocoState) -> dict:
-    """Call Claude 3.5 Sonnet with the full conversation history.
+    """Invoke the routed model (Haiku or Sonnet) with the full conversation history.
 
-    If the model decides to use a tool, the resulting AIMessage will contain
-    ``tool_calls``. The conditional router will then send execution to
-    ``mcp_gateway_node``. Otherwise it routes to END.
+    Boss Router pre-selects:
+      haiku  → lightweight conversational turns (fast, cheap, no tools)
+      sonnet → technical tasks with full tool access
     """
     last_message = state["messages"][-1]
-    logger.info("[Orchestrator 🧠] User said: %s", last_message.content)
+    route = state.get("routed_model", "sonnet")
+    logger.info("[Orchestrator 🧠] Model=%s | User: %s", route.upper(), last_message.content)
 
     focused = state.get("focused_context", "")
     system_prompt = f"{focused}\n\n{_SYSTEM_PROMPT}" if focused else _SYSTEM_PROMPT
 
-    response: AIMessage = await _get_model().ainvoke(
+    model = _get_sonnet() if route == "sonnet" else _get_haiku()
+
+    response: AIMessage = await model.ainvoke(
         [SystemMessage(content=system_prompt), *state["messages"]]
     )
 

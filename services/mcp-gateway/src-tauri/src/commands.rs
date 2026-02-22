@@ -311,6 +311,182 @@ pub async fn write_file(
     Ok(format!("Written {} bytes to {}", content.len(), file_path.display()))
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4: Voco Auto-Sec — Local security scanner
+// ---------------------------------------------------------------------------
+
+/// Scan a project for exposed secrets and dependency metadata.
+///
+/// Performs two checks without any network calls:
+///   1. Reads `package.json` (deps + devDeps) at the project root.
+///   2. Walks for `.env*` files and flags lines that match known secret
+///      patterns (API key prefixes, private key headers, OAuth tokens, etc.).
+///
+/// Returns a JSON string that Python passes to Claude for threat analysis.
+#[tauri::command]
+pub async fn scan_security(project_path: PathBuf) -> Result<String, String> {
+    if !project_path.is_absolute() {
+        return Err(format!(
+            "project_path must be absolute: '{}'",
+            project_path.display()
+        ));
+    }
+
+    // --- 1. Read package.json dependency manifest ---
+    let pkg_path = project_path.join("package.json");
+    let lock_path = project_path.join("package-lock.json");
+
+    let dependencies: serde_json::Value = if pkg_path.exists() {
+        match std::fs::read_to_string(&pkg_path) {
+            Ok(content) => {
+                if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let deps = pkg.get("dependencies").cloned().unwrap_or(serde_json::json!({}));
+                    let dev_deps = pkg.get("devDependencies").cloned().unwrap_or(serde_json::json!({}));
+                    serde_json::json!({
+                        "source": "package.json",
+                        "dependencies": deps,
+                        "devDependencies": dev_deps
+                    })
+                } else {
+                    serde_json::json!({ "source": "package.json", "error": "parse error" })
+                }
+            }
+            Err(e) => serde_json::json!({ "source": "package.json", "error": e.to_string() }),
+        }
+    } else if lock_path.exists() {
+        serde_json::json!({
+            "source": "package-lock.json",
+            "note": "package-lock.json present — run npm audit for full CVE report"
+        })
+    } else {
+        serde_json::json!(null)
+    };
+
+    // --- 2. Scan .env* files for secrets ---
+    // Pattern: (substring to match, human description, severity)
+    let patterns: &[(&str, &str, &str)] = &[
+        ("sk-proj-", "OpenAI project API key", "critical"),
+        ("sk-", "OpenAI/Anthropic-style API key", "high"),
+        ("sk_test_", "Stripe test secret key", "high"),
+        ("sk_live_", "Stripe live secret key", "critical"),
+        ("AKIA", "AWS Access Key ID", "critical"),
+        ("ghp_", "GitHub Personal Access Token", "high"),
+        ("github_pat_", "GitHub Fine-grained PAT", "high"),
+        ("xai-", "xAI API key", "high"),
+        ("-----BEGIN", "Private key or certificate", "critical"),
+        ("ya29.", "Google OAuth access token", "high"),
+        ("EAA", "Facebook/Meta access token", "medium"),
+    ];
+
+    let env_issues = scan_env_files_for_secrets(&project_path, patterns);
+
+    let report = serde_json::json!({
+        "project_path": project_path.display().to_string(),
+        "dependencies": dependencies,
+        "env_issues": env_issues,
+        "scan_timestamp": "local"
+    });
+
+    serde_json::to_string(&report).map_err(|e| format!("Serialization error: {e}"))
+}
+
+/// Walk the project root (and common service subdirs) for `.env*` files,
+/// check each non-comment line for known secret prefixes.
+fn scan_env_files_for_secrets(
+    project_path: &PathBuf,
+    patterns: &[(&str, &str, &str)],
+) -> Vec<serde_json::Value> {
+    let mut issues = Vec::new();
+
+    // Directories to check — project root + common monorepo service dirs
+    let search_dirs: Vec<PathBuf> = {
+        let mut dirs = vec![project_path.clone()];
+        if let Ok(entries) = std::fs::read_dir(project_path.join("services")) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    dirs.push(p);
+                }
+            }
+        }
+        dirs
+    };
+
+    for dir in &search_dirs {
+        if !dir.exists() {
+            continue;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let fname = entry.file_name();
+            let fname_str = fname.to_string_lossy();
+            // Only scan .env, .env.local, .env.production, .env.development, etc.
+            if !fname_str.starts_with(".env") {
+                continue;
+            }
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let is_example =
+                fname_str.contains("example") || fname_str.contains("sample") || fname_str.contains("template");
+
+            let rel_path = path
+                .strip_prefix(project_path)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| path.display().to_string());
+
+            for (line_num, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+                // Skip blank lines and comments
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                // Skip placeholder/template lines (no real value)
+                let value_part = line.splitn(2, '=').nth(1).unwrap_or("").trim();
+                if value_part.is_empty()
+                    || value_part.starts_with('<')
+                    || value_part.to_lowercase().contains("your_")
+                    || value_part.to_lowercase().contains("replace_me")
+                    || value_part == "\"\"" || value_part == "''"
+                {
+                    continue;
+                }
+
+                for (pattern, description, severity) in patterns {
+                    if line.contains(pattern) {
+                        let key = line.splitn(2, '=').next().unwrap_or("").trim().to_string();
+                        issues.push(serde_json::json!({
+                            "file": rel_path,
+                            "line": line_num + 1,
+                            "key": key,
+                            "severity": if is_example { "low" } else { severity },
+                            "pattern_matched": pattern,
+                            "issue_type": description,
+                            "note": if is_example {
+                                "Example/template file — verify this is not a real secret"
+                            } else {
+                                "Potentially real secret detected in env file"
+                            }
+                        }));
+                        break; // one issue per line
+                    }
+                }
+            }
+        }
+    }
+
+    issues
+}
+
 /// Search a project directory using the bundled ripgrep sidecar.
 ///
 /// # Security

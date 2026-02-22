@@ -1,5 +1,6 @@
 mod audio;
 mod commands;
+mod screen;
 
 use audio::AudioState;
 
@@ -9,6 +10,12 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .manage(AudioState::new())
+        .setup(|_app| {
+            // Phase 3: start the background screen capture thread.
+            // Frames accumulate silently; get_recent_frames() reads them on demand.
+            screen::start_capture_thread();
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::search_project,
             commands::write_file,
@@ -17,8 +24,10 @@ pub fn run() {
             commands::save_api_keys,
             commands::load_api_keys,
             commands::open_url,
+            commands::scan_security,
             audio::play_native_audio,
             audio::halt_native_audio,
+            screen::get_recent_frames,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Voco MCP Gateway");

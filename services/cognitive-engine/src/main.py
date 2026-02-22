@@ -25,7 +25,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 
-from src.billing.routes import router as billing_router
+from src.billing.routes import router as billing_router, report_voice_turn
 from src.db import sync_ledger_to_supabase, update_ledger_node
 from src.graph.background_worker import BackgroundJobQueue
 from src.ide_mcp_server import attach_ide_mcp_routes
@@ -189,32 +189,44 @@ async def voco_stream(websocket: WebSocket) -> None:
         """Clear the Visual Ledger from the frontend."""
         await websocket.send_json({"type": "ledger_clear"})
 
-    async def _on_turn_end() -> None:
-        """Full pipeline: STT → LangGraph → (optional JSON-RPC) → TTS."""
+    async def _on_turn_end(text_override: str | None = None) -> None:
+        """Full pipeline: STT → LangGraph → (optional JSON-RPC) → TTS.
+
+        When ``text_override`` is provided the STT step is skipped entirely —
+        the text arrives directly from the "Type instead" input box and is fed
+        straight into LangGraph.  Billing still fires at the end so typed turns
+        are metered identically to spoken turns.
+        """
         nonlocal audio_buffer, tts_active
 
         await websocket.send_json({"type": "control", "action": "turn_ended"})
 
-        # --- Step 1: Transcribe buffered audio via Deepgram ---
-        if not audio_buffer:
-            logger.warning("[Pipeline] Turn ended with empty audio buffer — skipping.")
-            return
+        if text_override is not None:
+            # --- Text input path: skip STT ---
+            transcript = text_override
+            logger.info("[Pipeline] Text input: %.120s", transcript)
+            await websocket.send_json({"type": "transcript", "text": transcript})
+        else:
+            # --- Voice path: transcribe buffered audio via Deepgram ---
+            if not audio_buffer:
+                logger.warning("[Pipeline] Turn ended with empty audio buffer — skipping.")
+                return
 
-        # Require a minimum buffer size to avoid transcribing noise/clicks
-        if len(audio_buffer) < 6400:  # < 200ms of audio at 16kHz mono 16-bit
-            logger.info("[Pipeline] Audio buffer too small (%d bytes) — likely noise, skipping.", len(audio_buffer))
+            # Require a minimum buffer size to avoid transcribing noise/clicks
+            if len(audio_buffer) < 6400:  # < 200ms of audio at 16kHz mono 16-bit
+                logger.info("[Pipeline] Audio buffer too small (%d bytes) — likely noise, skipping.", len(audio_buffer))
+                audio_buffer = bytearray()
+                return
+
+            transcript = await stt.transcribe_once(bytes(audio_buffer))
             audio_buffer = bytearray()
-            return
 
-        transcript = await stt.transcribe_once(bytes(audio_buffer))
-        audio_buffer = bytearray()
+            if not transcript or len(transcript.strip()) < 2:
+                logger.info("[Pipeline] Empty/trivial transcript — user may have been silent.")
+                return
 
-        if not transcript or len(transcript.strip()) < 2:
-            logger.info("[Pipeline] Empty/trivial transcript — user may have been silent.")
-            return
-
-        logger.info("[Pipeline] Transcript: %s", transcript)
-        await websocket.send_json({"type": "transcript", "text": transcript})
+            logger.info("[Pipeline] Transcript: %s", transcript)
+            await websocket.send_json({"type": "transcript", "text": transcript})
 
         # --- Step 2: Run LangGraph (Claude 3.5 Sonnet) ---
         await _send_ledger_update(domain="general", context_router="active", orchestrator="pending", tools="pending")
@@ -397,137 +409,258 @@ async def voco_stream(websocket: WebSocket) -> None:
             tool_name = pending_action.get("name", "")
             tool_args = pending_action.get("args", {})
             call_id = pending_action.get("id", f"rpc-{uuid.uuid4().hex[:8]}")
+            _screen_handled = False
 
-            _fallback_path = (
-                result.get("active_project_path") or os.environ.get("VOCO_PROJECT_PATH", "")
-            )
-            rpc_payload = {
-                "type": "mcp_request",
-                "jsonrpc": "2.0",
-                "id": call_id,
-                "method": "local/search_project",
-                "params": {
-                    "pattern": tool_args.get("pattern", tool_args.get("query", "")),
-                    "project_path": _fallback_path,
-                },
-            }
-            job_id = uuid.uuid4().hex[:8]
-            logger.info(
-                "[Pipeline] Queuing background job %s for tool '%s' (call_id=%s)",
-                job_id, tool_name, call_id,
-            )
-
-            # 1. Instant ACK ToolMessage — resolves the pending tool_call in <1ms.
-            ack_message = ToolMessage(
-                content=(
-                    f"Action queued in background with Job ID: {job_id}. "
-                    "You may continue conversing with the user."
-                ),
-                tool_call_id=call_id,
-            )
-            await _send_ledger_update(
-                domain=detected_domain,
-                context_router="completed",
-                orchestrator="active",
-                tools="active",
-            )
-
-            # 2. Reinvoke graph with the ACK so Claude can acknowledge aloud
-            #    ("I've queued your search, feel free to ask me anything else.").
-            result = await graph.ainvoke(
-                {"messages": [ack_message]},
-                config=config,
-            )
-
-            # 3. Register a Future keyed on call_id.  The main receive loop below
-            #    resolves it when Tauri sends back the matching mcp_result message.
-            rpc_future: asyncio.Future = asyncio.get_running_loop().create_future()
-            _pending_rpc_futures[call_id] = rpc_future
-
-            # 4. Background coroutine: fire the RPC and await the Future.
-            async def _do_tauri_dispatch(
-                _call_id: str = call_id,
-                _job_id: str = job_id,
-                _payload: dict = rpc_payload,
-                _future: asyncio.Future = rpc_future,
-            ) -> str:
-                logger.info(
-                    "[BackgroundJob %s] Sending Tauri RPC: %s",
-                    _job_id, _payload["method"],
+            # ----------------------------------------------------------------
+            # Phase 3: Voco Eyes — inline screen analysis
+            # Screen capture is handled synchronously (not background) because
+            # Claude needs the images immediately to produce a useful response.
+            # ----------------------------------------------------------------
+            if tool_name == "analyze_screen":
+                await _send_ledger_update(
+                    domain=detected_domain,
+                    context_router="completed",
+                    orchestrator="active",
+                    tools="active",
                 )
+                logger.info("[VocoEyes] Requesting screen frames for call_id=%s", call_id)
+
+                # 1. Ask frontend to call get_recent_frames() via Tauri invoke
+                await websocket.send_json({"type": "screen_capture_request", "id": call_id})
+
+                # 2. Wait for the frontend to respond with the frames (10 s timeout)
+                frames: list[str] = []
+                media_type = "image/jpeg"
                 try:
-                    await websocket.send_json(_payload)
-                except Exception as send_exc:
-                    return f"Failed to dispatch RPC to Tauri: {send_exc}"
-                try:
-                    raw = await asyncio.wait_for(asyncio.shield(_future), timeout=30.0)
-                    mcp_resp = json.loads(raw)
-                    has_res = "result" in mcp_resp or mcp_resp.get("type") == "mcp_result"
-                    return (
-                        str(mcp_resp.get("result", ""))
-                        if has_res
-                        else str(mcp_resp.get("error", "no result returned"))
-                    )
+                    raw = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+                    frames_msg = json.loads(raw)
+                    if frames_msg.get("type") == "screen_frames":
+                        frames = frames_msg.get("frames", [])
+                        media_type = frames_msg.get("media_type", "image/jpeg")
                 except asyncio.TimeoutError:
-                    _pending_rpc_futures.pop(_call_id, None)
-                    return f"Background job {_job_id} timed out after 30 seconds."
+                    logger.warning("[VocoEyes] Timed out waiting for screen_frames")
+                except Exception as exc:
+                    logger.warning("[VocoEyes] Error receiving screen_frames: %s", exc)
 
-            # 5. Completion callback: inject the result into LangGraph state so
-            #    Claude discovers it on the user's next spoken turn.
-            async def _on_job_complete(
-                _job_id: str,
-                result_str: str,
-                _config: dict = config,
-                _tool_name: str = tool_name,
-                _domain: str = detected_domain,
-            ) -> None:
-                notification = SystemMessage(
-                    content=(
-                        f"[BACKGROUND JOB COMPLETE] Job {_job_id} "
-                        f"({_tool_name}): {result_str[:2000]}"
-                    )
-                )
-                try:
-                    await graph.aupdate_state(_config, {"messages": [notification]})
-                    logger.info(
-                        "[BackgroundJob %s] Result injected into LangGraph state.", _job_id
-                    )
-                except Exception as state_exc:
-                    logger.error(
-                        "[BackgroundJob %s] Failed to update state: %s", _job_id, state_exc
-                    )
-                # Persist final node status to Supabase Logic Ledger.
-                await update_ledger_node(
-                    session_id=thread_id,
-                    node_id="3",
-                    status="completed",
-                    execution_output=result_str,
-                )
-
-                # Notify the frontend so it can update the Visual Ledger.
-                try:
-                    await websocket.send_json({
-                        "type": "async_job_update",
-                        "job_id": _job_id,
-                        "tool_name": _tool_name,
-                        "ledger_node_id": "3",
-                        "status": "completed",
-                        "result": result_str[:500],
+                # 3. Build multimodal ToolMessage — images + context text
+                user_desc = tool_args.get("user_description", "")
+                if frames:
+                    sampled = frames[-5:]  # max 5 frames (Anthropic image limit)
+                    vision_content: list = [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{media_type};base64,{f}"},
+                        }
+                        for f in sampled
+                    ]
+                    vision_content.append({
+                        "type": "text",
+                        "text": (
+                            f"These are {len(sampled)} sequential screenshots of the user's screen "
+                            "captured at 500ms intervals (most recent last). "
+                            + (f"User says: {user_desc}. " if user_desc else "")
+                            + "Analyze the visual state and diagnose any visible bugs, errors, or UI issues."
+                        ),
                     })
-                except Exception:
-                    pass  # WebSocket may have closed before the job finished.
+                    screen_tool_msg = ToolMessage(content=vision_content, tool_call_id=call_id)
+                    logger.info("[VocoEyes] Sending %d frames to Claude vision.", len(sampled))
+                else:
+                    screen_tool_msg = ToolMessage(
+                        content="Screen buffer was empty — no frames captured yet. Tell the user to try again in a moment.",
+                        tool_call_id=call_id,
+                    )
+                    logger.warning("[VocoEyes] No frames in buffer.")
 
-            # 6. Fire and forget — the task runs concurrently with TTS streaming.
-            background_queue.submit(job_id, _do_tauri_dispatch(), _on_job_complete)
-            # Notify the frontend immediately so it can render the spinning node.
-            await websocket.send_json({
-                "type": "background_job_start",
-                "job_id": job_id,
-                "tool_name": tool_name,
-            })
-            logger.info(
-                "[Pipeline] Background job %s dispatched; proceeding to TTS.", job_id
-            )
+                # 4. Re-invoke graph — Claude produces a visual analysis response
+                result = await graph.ainvoke({"messages": [screen_tool_msg]}, config=config)
+                _screen_handled = True
+
+            # ----------------------------------------------------------------
+            # Phase 4: Voco Auto-Sec — inline security scan
+            # Like screen analysis, this is synchronous: Rust scans the
+            # project instantly (no network calls) and Claude analyzes the
+            # JSON findings immediately.
+            # ----------------------------------------------------------------
+            elif tool_name == "scan_vulnerabilities":
+                await _send_ledger_update(
+                    domain=detected_domain,
+                    context_router="completed",
+                    orchestrator="active",
+                    tools="active",
+                )
+                project_path_arg = tool_args.get("project_path", os.environ.get("VOCO_PROJECT_PATH", ""))
+                logger.info("[AutoSec] Requesting security scan for call_id=%s path=%s", call_id, project_path_arg)
+
+                # 1. Ask frontend to invoke scan_security via Tauri
+                await websocket.send_json({
+                    "type": "scan_security_request",
+                    "id": call_id,
+                    "project_path": project_path_arg,
+                })
+
+                # 2. Await scan findings (30 s — project may have many env files)
+                findings_str = ""
+                try:
+                    raw = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                    scan_msg = json.loads(raw)
+                    if scan_msg.get("type") == "scan_security_result":
+                        findings_str = json.dumps(scan_msg.get("findings", {}), indent=2)
+                    else:
+                        findings_str = json.dumps(scan_msg, indent=2)
+                except asyncio.TimeoutError:
+                    logger.warning("[AutoSec] Timed out waiting for scan_security_result")
+                    findings_str = '{"error": "Scan timed out after 30 seconds."}'
+                except Exception as exc:
+                    logger.warning("[AutoSec] Error receiving scan result: %s", exc)
+                    findings_str = json.dumps({"error": str(exc)})
+
+                # 3. Build ToolMessage with findings for Claude to analyze
+                sec_tool_msg = ToolMessage(
+                    content=(
+                        "Security scan complete. Analyze these findings and provide a "
+                        "prioritized threat summary with actionable remediation steps. "
+                        "Be concise — your response will be spoken aloud.\n\n"
+                        + findings_str
+                    ),
+                    tool_call_id=call_id,
+                )
+                logger.info("[AutoSec] Findings ready (%d chars), invoking Claude.", len(findings_str))
+
+                # 4. Re-invoke graph — Claude produces spoken security analysis
+                result = await graph.ainvoke({"messages": [sec_tool_msg]}, config=config)
+                _screen_handled = True
+
+            # ----------------------------------------------------------------
+            # Standard: Instant ACK + Background Dispatch (all non-screen tools)
+            # ----------------------------------------------------------------
+            if not _screen_handled:
+                _fallback_path = (
+                    result.get("active_project_path") or os.environ.get("VOCO_PROJECT_PATH", "")
+                )
+                rpc_payload = {
+                    "type": "mcp_request",
+                    "jsonrpc": "2.0",
+                    "id": call_id,
+                    "method": "local/search_project",
+                    "params": {
+                        "pattern": tool_args.get("pattern", tool_args.get("query", "")),
+                        "project_path": _fallback_path,
+                    },
+                }
+                job_id = uuid.uuid4().hex[:8]
+                logger.info(
+                    "[Pipeline] Queuing background job %s for tool '%s' (call_id=%s)",
+                    job_id, tool_name, call_id,
+                )
+
+                # 1. Instant ACK ToolMessage — resolves the pending tool_call in <1ms.
+                ack_message = ToolMessage(
+                    content=(
+                        f"Action queued in background with Job ID: {job_id}. "
+                        "You may continue conversing with the user."
+                    ),
+                    tool_call_id=call_id,
+                )
+                await _send_ledger_update(
+                    domain=detected_domain,
+                    context_router="completed",
+                    orchestrator="active",
+                    tools="active",
+                )
+
+                # 2. Reinvoke graph with the ACK so Claude can acknowledge aloud.
+                result = await graph.ainvoke(
+                    {"messages": [ack_message]},
+                    config=config,
+                )
+
+                # 3. Register a Future keyed on call_id.  The main receive loop
+                #    resolves it when Tauri sends back the matching mcp_result.
+                rpc_future: asyncio.Future = asyncio.get_running_loop().create_future()
+                _pending_rpc_futures[call_id] = rpc_future
+
+                # 4. Background coroutine: fire the RPC and await the Future.
+                async def _do_tauri_dispatch(
+                    _call_id: str = call_id,
+                    _job_id: str = job_id,
+                    _payload: dict = rpc_payload,
+                    _future: asyncio.Future = rpc_future,
+                ) -> str:
+                    logger.info(
+                        "[BackgroundJob %s] Sending Tauri RPC: %s",
+                        _job_id, _payload["method"],
+                    )
+                    try:
+                        await websocket.send_json(_payload)
+                    except Exception as send_exc:
+                        return f"Failed to dispatch RPC to Tauri: {send_exc}"
+                    try:
+                        raw = await asyncio.wait_for(asyncio.shield(_future), timeout=30.0)
+                        mcp_resp = json.loads(raw)
+                        has_res = "result" in mcp_resp or mcp_resp.get("type") == "mcp_result"
+                        return (
+                            str(mcp_resp.get("result", ""))
+                            if has_res
+                            else str(mcp_resp.get("error", "no result returned"))
+                        )
+                    except asyncio.TimeoutError:
+                        _pending_rpc_futures.pop(_call_id, None)
+                        return f"Background job {_job_id} timed out after 30 seconds."
+
+                # 5. Completion callback: inject result into LangGraph state.
+                async def _on_job_complete(
+                    _job_id: str,
+                    result_str: str,
+                    _config: dict = config,
+                    _tool_name: str = tool_name,
+                    _domain: str = detected_domain,
+                ) -> None:
+                    notification = SystemMessage(
+                        content=(
+                            f"[BACKGROUND JOB COMPLETE] Job {_job_id} "
+                            f"({_tool_name}): {result_str[:2000]}"
+                        )
+                    )
+                    try:
+                        await graph.aupdate_state(_config, {"messages": [notification]})
+                        logger.info(
+                            "[BackgroundJob %s] Result injected into LangGraph state.", _job_id
+                        )
+                    except Exception as state_exc:
+                        logger.error(
+                            "[BackgroundJob %s] Failed to update state: %s", _job_id, state_exc
+                        )
+                    # Persist final node status to Supabase Logic Ledger.
+                    await update_ledger_node(
+                        session_id=thread_id,
+                        node_id="3",
+                        status="completed",
+                        execution_output=result_str,
+                    )
+
+                    # Notify the frontend so it can update the Visual Ledger.
+                    try:
+                        await websocket.send_json({
+                            "type": "async_job_update",
+                            "job_id": _job_id,
+                            "tool_name": _tool_name,
+                            "ledger_node_id": "3",
+                            "status": "completed",
+                            "result": result_str[:500],
+                        })
+                    except Exception:
+                        pass  # WebSocket may have closed before the job finished.
+
+                # 6. Fire and forget — runs concurrently with TTS streaming.
+                background_queue.submit(job_id, _do_tauri_dispatch(), _on_job_complete)
+                await websocket.send_json({
+                    "type": "background_job_start",
+                    "job_id": job_id,
+                    "tool_name": tool_name,
+                })
+                logger.info(
+                    "[Pipeline] Background job %s dispatched; proceeding to TTS.", job_id
+                )
 
         # --- Step 4: Extract final text and synthesise via Cartesia TTS ---
         final_message = result["messages"][-1]
@@ -565,6 +698,9 @@ async def voco_stream(websocket: WebSocket) -> None:
         vad.reset()
         audio_buffer = bytearray()
 
+        # --- Stripe Seat + Meter: report one voice turn (fire and forget) ---
+        asyncio.create_task(report_voice_turn())
+
         # --- Supabase Logic Ledger sync ---
         domain_icon = {"database": "Database", "ui": "FileCode2", "api": "Terminal", "devops": "Terminal", "git": "Terminal", "general": "FileCode2"}
         _icon = domain_icon.get(detected_domain, "FileCode2")
@@ -589,6 +725,17 @@ async def voco_stream(websocket: WebSocket) -> None:
             await _on_turn_end()
         except Exception as exc:
             logger.error("[Pipeline] Turn-end pipeline error: %s", exc, exc_info=True)
+            try:
+                await _send_ledger_clear()
+            except Exception:
+                pass
+
+    async def _safe_text_input(text: str) -> None:
+        """Run the full pipeline for a typed message, bypassing STT."""
+        try:
+            await _on_turn_end(text_override=text)
+        except Exception as exc:
+            logger.error("[Pipeline] Text input pipeline error: %s", exc, exc_info=True)
             try:
                 await _send_ledger_clear()
             except Exception:
@@ -622,7 +769,13 @@ async def voco_stream(websocket: WebSocket) -> None:
                     payload = json.loads(message["text"])
                     msg_type = payload.get("type", "")
 
-                    if msg_type == "mcp_result":
+                    if msg_type == "text_input":
+                        # "Type instead" path — bypass STT, feed directly into LangGraph.
+                        text = payload.get("text", "").strip()
+                        if text:
+                            logger.info("[WS] Text input received: %.120s", text)
+                            asyncio.create_task(_safe_text_input(text))
+                    elif msg_type == "mcp_result":
                         # Route Tauri's response to the awaiting background job.
                         msg_id = payload.get("id", "")
                         future = _pending_rpc_futures.get(msg_id)

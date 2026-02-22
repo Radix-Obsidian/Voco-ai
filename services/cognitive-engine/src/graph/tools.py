@@ -180,6 +180,56 @@ def propose_file_creation(file_path: str, content: str, description: str) -> dic
 
 
 @tool
+def analyze_screen(user_description: str = "") -> dict:
+    """Visually analyze the user's screen to diagnose UI bugs or crashes.
+
+    Use this when the user says:
+      - "watch this bug" / "look at my screen" / "can you see this?"
+      - "analyze this error" / "what's happening on my screen?"
+      - Any request to visually examine the current UI state.
+
+    The tool triggers capture of the last ~5 seconds of screen frames, then
+    Claude uses its vision capabilities to identify what went wrong.
+
+    Args:
+        user_description: What the user wants analyzed (optional context).
+
+    Returns:
+        A signal dict that main.py intercepts to trigger the capture flow.
+    """
+    return {
+        "method": "local/get_recent_frames",
+        "params": {"user_description": user_description},
+    }
+
+
+@tool
+def scan_vulnerabilities(project_path: str) -> dict:
+    """Scan the project for exposed secrets and vulnerable dependencies.
+
+    Use this when the user asks:
+      - "scan my dependencies" / "check for vulnerabilities"
+      - "are there any secrets exposed?" / "audit my security"
+      - "check my env files" / "is my project secure?"
+      - "run a security scan" / "look for API keys in my project"
+
+    Scans (all local, no network calls):
+      - package.json for dependency names and versions (for CVE analysis).
+      - .env* files for exposed API keys, tokens, and private key headers.
+
+    Args:
+        project_path: Absolute path to the project directory to scan.
+
+    Returns:
+        A signal dict that main.py intercepts to trigger the Rust scanner.
+    """
+    return {
+        "method": "local/scan_security",
+        "params": {"project_path": project_path},
+    }
+
+
+@tool
 def propose_file_edit(file_path: str, diff: str, description: str) -> dict:
     """Propose editing an existing file in the user's project.
 
@@ -218,5 +268,7 @@ def get_all_tools():
         github_create_pr,
         propose_file_creation,
         propose_file_edit,
+        analyze_screen,
+        scan_vulnerabilities,
         *mcp_registry.get_tools(),
     ]

@@ -33,3 +33,4 @@ class VocoState(TypedDict):
     pending_commands: NotRequired[list[dict]]
     command_decisions: NotRequired[list[dict]]
     focused_context: NotRequired[str]
+    routed_model: NotRequired[str]  # "haiku" | "sonnet" — set by boss_router_node
