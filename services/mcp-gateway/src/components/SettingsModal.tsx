@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Settings, Eye, EyeOff, Save } from "lucide-react";
+import { Settings, Eye, EyeOff, Save, Zap, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +20,21 @@ import {
 } from "@/components/ui/select";
 import type { VocoSettings } from "@/hooks/use-settings";
 import { TTS_VOICES } from "@/hooks/use-settings";
+
+interface IdeSyncResult {
+  ide: string;
+  success: boolean;
+  message: string;
+  path: string;
+}
+
+async function invokeTauri<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+    throw new Error("Not running inside Tauri");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(cmd, args);
+}
 
 interface SettingsModalProps {
   open: boolean;
@@ -77,6 +92,22 @@ export function SettingsModal({
   onUpdate,
   onSave,
 }: SettingsModalProps) {
+  const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "done">("idle");
+  const [syncResults, setSyncResults] = useState<IdeSyncResult[]>([]);
+
+  const handleSyncIde = async () => {
+    setSyncStatus("syncing");
+    setSyncResults([]);
+    try {
+      const results = await invokeTauri<IdeSyncResult[]>("sync_ide_config");
+      setSyncResults(results);
+    } catch (err) {
+      setSyncResults([{ ide: "Error", success: false, message: String(err), path: "" }]);
+    } finally {
+      setSyncStatus("done");
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="bg-zinc-950 border-zinc-800 text-zinc-100 sm:max-w-lg">
@@ -148,6 +179,45 @@ export function SettingsModal({
             </Select>
           </div>
         </div>
+
+          {/* IDE Sync */}
+          <div className="pt-2 border-t border-zinc-800 space-y-3">
+            <Label className="text-sm font-medium text-zinc-300">IDE Auto-Config</Label>
+            <p className="text-xs text-zinc-500">
+              Inject Voco into your Cursor / Windsurf MCP config automatically.
+            </p>
+            <Button
+              type="button"
+              onClick={handleSyncIde}
+              disabled={syncStatus === "syncing"}
+              variant="outline"
+              className="w-full border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800 hover:text-white disabled:opacity-50"
+            >
+              {syncStatus === "syncing" ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Zap className="h-4 w-4 mr-2 text-emerald-400" />
+              )}
+              {syncStatus === "syncing" ? "Syncing…" : "Sync to Cursor / Windsurf"}
+            </Button>
+
+            {syncResults.length > 0 && (
+              <div className="space-y-1.5">
+                {syncResults.map((r) => (
+                  <div key={r.ide} className="flex items-start gap-2 text-xs">
+                    {r.success ? (
+                      <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0 text-emerald-400" />
+                    ) : (
+                      <XCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-red-400" />
+                    )}
+                    <span className={r.success ? "text-zinc-300" : "text-zinc-500"}>
+                      <span className="font-medium">{r.ide}:</span> {r.message}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
         <DialogFooter>
           <Button

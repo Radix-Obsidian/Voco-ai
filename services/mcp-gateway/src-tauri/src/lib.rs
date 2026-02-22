@@ -13,6 +13,10 @@ pub fn run() {
             commands::search_project,
             commands::write_file,
             commands::execute_command,
+            commands::sync_ide_config,
+            commands::save_api_keys,
+            commands::load_api_keys,
+            commands::open_url,
             audio::play_native_audio,
             audio::halt_native_audio,
         ])

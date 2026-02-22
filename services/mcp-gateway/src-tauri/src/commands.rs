@@ -1,7 +1,197 @@
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri_plugin_shell::ShellExt;
+
+// ---------------------------------------------------------------------------
+// IDE Auto-Config
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// BYOK — native API key storage
+// ---------------------------------------------------------------------------
+
+/// All API keys stored in `{app_config_dir}/config.json`.
+/// Field names match Python env-var names so Python can `os.environ.update()` directly.
+#[derive(Serialize, Deserialize, Default)]
+pub struct VocoApiKeys {
+    #[serde(rename = "ANTHROPIC_API_KEY", default)]
+    pub anthropic_api_key: String,
+    #[serde(rename = "DEEPGRAM_API_KEY", default)]
+    pub deepgram_api_key: String,
+    #[serde(rename = "CARTESIA_API_KEY", default)]
+    pub cartesia_api_key: String,
+    #[serde(rename = "GITHUB_TOKEN", default)]
+    pub github_token: String,
+    #[serde(rename = "TTS_VOICE", default)]
+    pub tts_voice: String,
+}
+
+/// Persist API keys to `{app_config_dir}/config.json`.
+#[tauri::command]
+pub async fn save_api_keys(app: AppHandle, keys: VocoApiKeys) -> Result<(), String> {
+    use tauri::Manager;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("Cannot resolve app config dir: {e}"))?;
+    std::fs::create_dir_all(&config_dir)
+        .map_err(|e| format!("Cannot create config dir: {e}"))?;
+    let json = serde_json::to_string_pretty(&keys)
+        .map_err(|e| format!("Serialization error: {e}"))?;
+    std::fs::write(config_dir.join("config.json"), json)
+        .map_err(|e| format!("Write error: {e}"))?;
+    Ok(())
+}
+
+/// Load API keys from `{app_config_dir}/config.json`.
+/// Returns defaults (empty strings) if the file doesn't exist yet.
+#[tauri::command]
+pub async fn load_api_keys(app: AppHandle) -> Result<VocoApiKeys, String> {
+    use tauri::Manager;
+    let config_path = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("Cannot resolve app config dir: {e}"))?
+        .join("config.json");
+    if !config_path.exists() {
+        return Ok(VocoApiKeys::default());
+    }
+    let raw = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("Read error: {e}"))?;
+    serde_json::from_str(&raw).map_err(|e| format!("Parse error: {e}"))
+}
+
+// ---------------------------------------------------------------------------
+// IDE Auto-Config
+// ---------------------------------------------------------------------------
+
+/// Per-IDE result returned from `sync_ide_config`.
+#[derive(Serialize)]
+pub struct IdeSyncResult {
+    pub ide: String,
+    pub success: bool,
+    pub message: String,
+    pub path: String,
+}
+
+/// Resolve the user's home directory without an external crate.
+fn home_dir() -> Option<PathBuf> {
+    let key = if cfg!(target_os = "windows") { "USERPROFILE" } else { "HOME" };
+    std::env::var(key).ok().map(PathBuf::from)
+}
+
+/// Inject a `voco-local` MCP server entry into Cursor and Windsurf config files.
+///
+/// - Reads the existing `mcp.json` (or starts with `{}`).
+/// - Merges `mcpServers.voco-local` pointing to the cognitive engine's MCP SSE endpoint.
+/// - Writes back, creating the file if it didn't exist.
+/// - Skips any IDE whose config directory doesn't exist (i.e. not installed).
+#[tauri::command]
+pub async fn sync_ide_config() -> Result<Vec<IdeSyncResult>, String> {
+    let home = home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+
+    // SSE transport — cognitive engine will expose this endpoint.
+    let voco_entry = serde_json::json!({
+        "url": "http://localhost:8001/mcp"
+    });
+
+    let targets: Vec<(&str, PathBuf)> = vec![
+        ("Cursor", home.join(".cursor").join("mcp.json")),
+        ("Windsurf", home.join(".windsurf").join("mcp.json")),
+    ];
+
+    let mut results = Vec::new();
+
+    for (ide_name, config_path) in targets {
+        let dir = match config_path.parent() {
+            Some(d) => d.to_owned(),
+            None => {
+                results.push(IdeSyncResult {
+                    ide: ide_name.to_string(),
+                    success: false,
+                    message: "Invalid config path".to_string(),
+                    path: config_path.display().to_string(),
+                });
+                continue;
+            }
+        };
+
+        // If the IDE config directory doesn't exist, the IDE isn't installed.
+        if !dir.exists() {
+            results.push(IdeSyncResult {
+                ide: ide_name.to_string(),
+                success: false,
+                message: format!("{ide_name} not found — config directory does not exist."),
+                path: config_path.display().to_string(),
+            });
+            continue;
+        }
+
+        // Read existing config or start fresh.
+        let mut config: serde_json::Value = if config_path.exists() {
+            let raw = std::fs::read_to_string(&config_path).unwrap_or_default();
+            serde_json::from_str(&raw).unwrap_or(serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+
+        if !config.is_object() {
+            config = serde_json::json!({});
+        }
+
+        // Merge voco-local into mcpServers.
+        let map = config.as_object_mut().unwrap();
+        let servers = map
+            .entry("mcpServers")
+            .or_insert_with(|| serde_json::json!({}));
+
+        if let Some(servers_map) = servers.as_object_mut() {
+            servers_map.insert("voco-local".to_string(), voco_entry.clone());
+        }
+
+        match serde_json::to_string_pretty(&config) {
+            Ok(json_str) => match std::fs::write(&config_path, json_str) {
+                Ok(()) => results.push(IdeSyncResult {
+                    ide: ide_name.to_string(),
+                    success: true,
+                    message: format!("voco-local synced to {ide_name}"),
+                    path: config_path.display().to_string(),
+                }),
+                Err(e) => results.push(IdeSyncResult {
+                    ide: ide_name.to_string(),
+                    success: false,
+                    message: format!("Write failed: {e}"),
+                    path: config_path.display().to_string(),
+                }),
+            },
+            Err(e) => results.push(IdeSyncResult {
+                ide: ide_name.to_string(),
+                success: false,
+                message: format!("Serialization failed: {e}"),
+                path: config_path.display().to_string(),
+            }),
+        }
+    }
+
+    Ok(results)
+}
+
+// ---------------------------------------------------------------------------
+// Billing — open Stripe Checkout / Portal URLs in the system browser
+// ---------------------------------------------------------------------------
+
+/// Open a URL in the system default browser.
+///
+/// Used by the PricingModal to redirect the user to Stripe Checkout or the
+/// Customer Portal without keeping the URL inside the Tauri webview.
+#[tauri::command]
+pub async fn open_url(app: AppHandle, url: String) -> Result<(), String> {
+    app.shell()
+        .open(&url, None)
+        .map_err(|e| format!("Failed to open URL: {e}"))
+}
 
 /// Execute a shell command within an authorized project directory.
 ///

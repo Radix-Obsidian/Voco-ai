@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { toast } from "@/hooks/use-toast";
 
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -43,7 +44,8 @@ export interface LedgerNode {
   iconType: string;
   title: string;
   description: string;
-  status: "completed" | "active" | "pending";
+  status: "completed" | "active" | "pending" | "failed";
+  execution_output?: string;
 }
 
 export interface LedgerState {
@@ -59,6 +61,13 @@ export interface CommandProposal {
   status: "pending" | "approved" | "rejected";
 }
 
+/** A long-running tool dispatched to the background queue (Milestone 11). */
+export interface BackgroundJob {
+  job_id: string;
+  tool_name: string;
+  status: "running" | "completed" | "failed";
+}
+
 export function useVocoSocket() {
   const [isConnected, setIsConnected] = useState(false);
   const [bargeInActive, setBargeInActive] = useState(false);
@@ -68,6 +77,7 @@ export function useVocoSocket() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [commandProposals, setCommandProposals] = useState<CommandProposal[]>([]);
   const [ledgerState, setLedgerState] = useState<LedgerState | null>(null);
+  const [backgroundJobs, setBackgroundJobs] = useState<BackgroundJob[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRequests = useRef<Map<string, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>>(new Map());
 
@@ -333,9 +343,29 @@ export function useVocoSocket() {
               console.log("[TTS] Ended — mic resumed");
             }, 600);
           }
+        } else if (msg.type === "background_job_start") {
+          // A new async tool was dispatched to the background queue.
+          setBackgroundJobs((prev) => [
+            ...prev,
+            { job_id: msg.job_id, tool_name: msg.tool_name, status: "running" },
+          ]);
+          console.log(`[VocoSocket] Background job started: ${msg.job_id} (${msg.tool_name})`);
+        } else if (msg.type === "background_job_complete") {
+          // Mark the job done and auto-remove after 4 s so the UI stays clean.
+          setBackgroundJobs((prev) =>
+            prev.map((j) =>
+              j.job_id === msg.job_id ? { ...j, status: "completed" } : j
+            )
+          );
+          toast({ title: "Background task complete", description: msg.tool_name });
+          setTimeout(() => {
+            setBackgroundJobs((prev) => prev.filter((j) => j.job_id !== msg.job_id));
+          }, 4000);
+          console.log(`[VocoSocket] Background job complete: ${msg.job_id}`);
         } else if (msg.type === "ledger_update") {
           setLedgerState(msg.payload);
         } else if (msg.type === "ledger_clear") {
+          // Clear the transient pipeline state but preserve active background jobs.
           setLedgerState(null);
         } else if (msg.type === "command_proposal") {
           setCommandProposals((prev) => [
@@ -423,6 +453,7 @@ export function useVocoSocket() {
     submitProposalDecisions,
     submitCommandDecisions,
     ledgerState,
+    backgroundJobs,
     wsRef,
   };
 }

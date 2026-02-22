@@ -1,5 +1,27 @@
 import { useState, useEffect, useCallback } from "react";
 
+const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+async function _nativeLoad(): Promise<Partial<VocoSettings> | null> {
+  if (!isTauri()) return null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<VocoSettings>("load_api_keys");
+  } catch {
+    return null;
+  }
+}
+
+async function _nativeSave(settings: VocoSettings): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("save_api_keys", { keys: settings });
+  } catch (e) {
+    console.warn("[Settings] Native save failed:", e);
+  }
+}
+
 export interface VocoSettings {
   // BYOK API keys (Milestone 10)
   ANTHROPIC_API_KEY: string;
@@ -38,9 +60,17 @@ export const TTS_VOICES = [
 export function useSettings() {
   const [settings, setSettings] = useState<VocoSettings>(loadSettings);
 
+  // Persist to localStorage on every change.
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
   }, [settings]);
+
+  // On mount: hydrate from native OS storage (overrides localStorage if present).
+  useEffect(() => {
+    _nativeLoad().then((native) => {
+      if (native) setSettings((prev) => ({ ...prev, ...native }));
+    });
+  }, []);
 
   const updateSetting = useCallback(
     <K extends keyof VocoSettings>(key: K, value: VocoSettings[K]) => {
@@ -82,5 +112,8 @@ export function useSettings() {
     [settings]
   );
 
-  return { settings, updateSetting, resetSettings, hasRequiredKeys, pushToBackend };
+  /** Persist current settings to the native OS config file (called on explicit save). */
+  const saveSettings = useCallback(() => _nativeSave(settings), [settings]);
+
+  return { settings, updateSetting, resetSettings, hasRequiredKeys, pushToBackend, saveSettings };
 }

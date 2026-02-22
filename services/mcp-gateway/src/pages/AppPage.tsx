@@ -8,6 +8,7 @@ import { ReviewDeck } from "@/components/ReviewDeck";
 import { CommandApproval } from "@/components/CommandApproval";
 import { VisualLedger } from "@/components/VisualLedger";
 import { SettingsModal } from "@/components/SettingsModal";
+import { PricingModal } from "@/components/PricingModal";
 import { OnboardingTour } from "@/components/OnboardingTour";
 import { Mic, Send, ArrowRight } from "lucide-react";
 
@@ -25,11 +26,13 @@ const AppPage = () => {
     submitProposalDecisions,
     submitCommandDecisions,
     ledgerState,
+    backgroundJobs,
     wsRef,
   } = useVocoSocket();
 
-  const { settings, updateSetting, hasRequiredKeys, pushToBackend } = useSettings();
+  const { settings, updateSetting, hasRequiredKeys, pushToBackend, saveSettings } = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pricingOpen, setPricingOpen] = useState(false);
   const [mode, setMode] = useState<"speak" | "type">("speak");
   const [textInput, setTextInput] = useState("");
   const [showOnboarding, setShowOnboarding] = useState(() => {
@@ -62,7 +65,15 @@ const AppPage = () => {
 
   const handleCloseTerminal = () => setTerminalOutput(null);
 
-  const handleSettingsSave = () => pushToBackend(wsRef.current);
+  const handleSettingsSave = () => {
+    saveSettings();                   // persist to OS config file
+    pushToBackend(wsRef.current);     // push to Python over WebSocket
+  };
+
+  // Auto-push keys whenever the WebSocket (re)connects so Python always has them.
+  useEffect(() => {
+    if (isConnected) pushToBackend(wsRef.current);
+  }, [isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendText = useCallback(() => {
     if (!textInput.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
@@ -89,7 +100,10 @@ const AppPage = () => {
 
   return (
     <div className="noise-overlay min-h-screen bg-background text-foreground relative">
-      <Header onOpenSettings={() => setSettingsOpen(true)} />
+      <Header
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenPricing={() => setPricingOpen(true)}
+      />
 
       <SettingsModal
         open={settingsOpen}
@@ -98,6 +112,8 @@ const AppPage = () => {
         onUpdate={updateSetting}
         onSave={handleSettingsSave}
       />
+
+      <PricingModal open={pricingOpen} onOpenChange={setPricingOpen} />
 
       {/* Main interaction area */}
       <main
@@ -210,7 +226,7 @@ const AppPage = () => {
         )}
       </main>
 
-      <VisualLedger state={ledgerState} />
+      <VisualLedger state={ledgerState} backgroundJobs={backgroundJobs} />
       {renderOverlay()}
 
       {showOnboarding && (

@@ -18,6 +18,12 @@ from pydantic import BaseModel, Field, create_model
 
 logger = logging.getLogger(__name__)
 
+# Resolve the default config path relative to this file so the registry
+# finds voco-mcp.json at the project root regardless of the working directory.
+# Path: mcp_registry.py → graph/ → src/ → cognitive-engine/ → services/ → Voco-ai/
+_PROJECT_ROOT = Path(__file__).parents[4]
+_DEFAULT_CONFIG_PATH = str(_PROJECT_ROOT / "voco-mcp.json")
+
 
 # ---------------------------------------------------------------------------
 # JSON Schema → Pydantic translator
@@ -68,7 +74,7 @@ def _jsonschema_to_pydantic(
 class UniversalMCPRegistry:
     """Manages connections to external MCP servers declared in ``voco-mcp.json``."""
 
-    def __init__(self, config_path: str = "voco-mcp.json") -> None:
+    def __init__(self, config_path: str = _DEFAULT_CONFIG_PATH) -> None:
         self.config_path = config_path
         self.dynamic_tools: List[StructuredTool] = []
         self._exit_stack = AsyncExitStack()

@@ -1,113 +1,219 @@
-# 🎙️ Voco V2: Master Context & Execution Directives (Feb 2026)
 
-## 0. Project Overview
-- Always refer to the official docs from any 3rd party library or framework you are using so we internalize the best practices.
+# CLAUDE.md
 
-## 0.1. Milestone Status
-- **Milestone 5 (COMPLETE):** Audio pipeline (Deepgram STT, Cartesia TTS) and LangGraph brain are active.
-- **Milestone 6 (ACTIVE):** Building the **Search Vertical Slice** — Voco is now a **Local-First Orchestrator**, not a voice-to-chat bot.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 1. Role & Identity
-You are the Lead Agentic Architect for **Voco V2**, a sub-300ms voice-native coding orchestrator. You are NOT building a standard text-based chatbot or a browser-only web app. You are building a stateful, interruptible voice interface using a Python LangGraph backend and a zero-trust Tauri (Rust) MCP Gateway.
+---
 
-## 2. The Context Hierarchy (MANDATORY)
-Before writing a single line of code, proposing a refactor, or answering a prompt, you MUST silently read and internalize the following documents in the `docs/` folder:
-1. `@docs/PRD.md` (Product Requirements & Feature Parity with V1)
-2. `@docs/TDD.md` (LangGraph & Streaming Audio Architecture)
-3. `@docs/SDD.md` (Zero-Trust MCP & Human-in-the-Loop Sandbox)
+## Project Overview
 
-If these files are missing from your context, ask the user to provide them.
+Voco V2 is a sub-300ms **voice-native coding orchestrator** — not a chatbot. It streams raw PCM audio from a Tauri desktop app to a Python LangGraph backend, transcribes it, runs it through Claude, and synthesizes a spoken response. All local file operations (search, write, execute) happen in Rust via a HITL approval loop — the Python engine never touches the filesystem directly.
 
-## 2.5. The Local Muscle (Tauri v2 + Rust)
-- **Directory:** `services/mcp-gateway/`
-- **Stack:** Tauri v2, Rust, Bun, React, Vite, Shadcn UI, TypeScript.
-- **The "Search Muscle":** All local filesystem searches MUST use the `search_project` command defined in `src-tauri/src/lib.rs`. Do NOT use any other file access path.
-- **Zero-Trust:** Every local file operation MUST be validated against `app.fs_scope().is_allowed()`. No path traversal is permitted under any circumstance.
+### Milestone Status
+- **Milestone 5 (COMPLETE):** Audio pipeline (Deepgram STT, Cartesia TTS) and LangGraph brain active.
+- **Milestone 6 (ACTIVE):** Search Vertical Slice — Voco is a **Local-First Orchestrator**.
 
-## 2.6. The Web Senses (Google WebMCP)
-- **Detection:** The frontend MUST use `navigator.modelContext` to detect WebMCP-ready sites before attempting any web tool-call.
-- **Hybrid Search Strategy:** When searching, Voco MUST prioritize local `ripgrep` results first, then augment with tool-calls to WebMCP-enabled documentation sites (e.g., StackOverflow, GitHub, MDN).
-- **Namespace Convention:** All JSON-RPC method names MUST be namespaced — `local/` for Rust commands, `web/` for WebMCP calls.
+---
 
-## 3. Monorepo Boundary Rules (Strict)
-This project is a monorepo containing two entirely separate runtimes. You must never mix their dependencies.
-- **`services/mcp-gateway/`**: The local frontend and execution sandbox.
-  - *Stack:* Tauri v2 (Rust), React, Vite, Shadcn UI, Bun, TypeScript.
-  - *Rule:* Only run `bun install` or `bun run` commands inside this specific directory.
-- **`services/cognitive-engine/`**: The remote cloud reasoning and audio engine.
-  - *Stack:* Python 3.12+, `uv`, FastAPI, LangGraph, Silero-VAD.
-  - *Rule:* Only run `uv add` or `uv run` commands inside this specific directory.
+## Monorepo Structure & Boundaries (Strict)
 
-## 3.5. LangGraph Architectural Guardrails
-- **Speculative Reasoning:** During voice pauses, the `SpeculativeNode` MUST begin pre-fetching files or searching the web before the user finishes speaking.
-- **Stateful Tooling:** `VocoState` MUST track a `pending_mcp_action` field. Any high-risk terminal command (`git push`, `db:migrate`) requires the Python graph to trigger `interrupt()`, speak the command via TTS, and wait for a transcribed "Yes" before Tauri executes it.
+Two entirely separate runtimes. **Never mix their dependencies.**
 
-## 4. Anti-Hallucination Guardrails (Overriding V1 Legacy Patterns)
-Because you might have knowledge of Voco V1, you must strictly obey these deprecation rules:
-- **NO Browser Voice:** Do NOT use the browser's native `SpeechRecognition` API. All audio capture must stream raw 16kHz PCM bytes over WebSockets to the Python `cognitive-engine`.
-- **NO Cloud MCP:** Do NOT write MCP server logic inside Supabase Edge Functions. The MCP execution engine MUST live locally in the Tauri Rust backend to securely access the user's file system.
-- **NO Sequential Generation:** Do NOT write standard LLM API loops. All AI reasoning MUST be modeled as a stateful `StateGraph` using the Python `langgraph` library, explicitly incorporating a `barge_in_detected` boolean flag.
-
-## 5. Security & Human-in-the-Loop (HITL)
-The AI engine running in Python has **ZERO direct access** to the user's local hard drive. 
-- If the Python LangGraph needs to read a file, run a test, or execute a `git` command, it MUST send a JSON-RPC 2.0 payload down the WebSocket to the Tauri frontend.
-- Tauri must intercept all terminal commands. For high-risk operations (e.g., `git push --force`, database mutations), the Python graph must trigger an `interrupt()`, speak the raw command to the user, and wait for a transcribed "Yes" before Tauri is allowed to execute it.
-
-## 6. The Execution Cycle (Never skip a step)
-When given a complex task, follow the **Analyze -> Plan -> [Approve] -> Execute** cycle:
-- **Analyze:** Use your tools (`ls`, `cat`, `grep`) to map the current state. NEVER guess file contents.
-- **Plan:** Present a step-by-step markdown plan of the proposed changes.
-- **Approve:** Stop and explicitly ask the user: *"Does this plan align with the V2 architecture?"* Wait for user confirmation.
-- **Execute:** Write the minimal amount of code required. Do not refactor unrelated files.
-
-## 7. The Discovery Machine JSON-RPC 2.0 Contract
-
-All communication between the Python Cognitive Engine and the Tauri Gateway for local/web discovery MUST follow this contract over the existing WebSocket bridge.
-
-### 7.1 Request: Python Engine → Tauri Gateway
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "local/search_project",
-  "params": {
-    "pattern": "<ripgrep_pattern>",
-    "project_path": "<absolute_path_within_voco_projects>"
-  },
-  "id": "<unique_request_id>"
-}
 ```
-- `method`: Namespaced as `local/` (local Rust ops) or `web/` (WebMCP calls).
-- `params.project_path`: MUST be within the user's `voco_projects` directory — validated by `fs_scope()`.
-- `id`: Unique string used to match async responses to specific LangGraph tool-calls.
-
-### 7.2 Success Response: Tauri Gateway → Python Engine
-```json
-{
-  "jsonrpc": "2.0",
-  "result": "<raw ripgrep output with file:line:match format>",
-  "id": "<matching_request_id>"
-}
+services/
+├── mcp-gateway/        # Tauri v2 (Rust) + React + Vite + Shadcn UI + Bun + TypeScript
+└── cognitive-engine/   # Python 3.12+ + FastAPI + LangGraph + Silero-VAD + uv
 ```
 
-### 7.3 Error Response (Security & Failures)
-```json
-{
-  "jsonrpc": "2.0",
-  "error": {
-    "code": -32000,
-    "message": "Security Violation: Search attempted outside of project scope.",
-    "data": {
-      "requested_path": "<attempted_path>",
-      "allowed_scope": "voco-projects"
-    }
-  },
-  "id": "<matching_request_id>"
-}
-```
-- `code: -32000`: Application-level error (security violation, ripgrep failure, scope breach).
-- `message`: Human-readable — Claude must relay this to the user via TTS.
+- In `services/mcp-gateway/`: use `bun install` / `bun run` only.
+- In `services/cognitive-engine/`: use `uv add` / `uv run` only.
 
-### 7.4 Implementation Rules
-1. **Python Side:** `SearchTool` in `nodes.py` wraps the JSON-RPC request, uses `asyncio.Future` keyed on `id` to await the response.
-2. **TypeScript Side:** `onmessage` in `use-voco-socket.ts` parses incoming JSON; routes `local/*` methods to Tauri `invoke()` and `web/*` to `navigator.modelContext` tool-calls.
-3. **Rust Side:** `search_project` command performs the double-lock check via `app.fs_scope().is_allowed()` BEFORE executing the `rg` sidecar binary.
+---
+
+## Dev Commands
+
+### Start Everything (Recommended)
+```bash
+cd services/mcp-gateway
+npm run dev
+# Runs: Tauri desktop app (frontend) + cognitive-engine uvicorn on :8001 concurrently
+```
+
+### Frontend Only
+```bash
+cd services/mcp-gateway
+bun run dev:frontend   # Vite dev server (browser preview only, no Tauri)
+npx tauri dev          # Full Tauri desktop build
+```
+
+### Cognitive Engine Only
+```bash
+cd services/cognitive-engine
+uv run uvicorn src.main:app --host 0.0.0.0 --port 8001
+```
+
+### Tests (Python)
+```bash
+cd services/cognitive-engine
+uv run pytest tests/ -v
+# Run a single test file:
+uv run pytest tests/test_bargein_routing.py -v
+```
+
+### Lint (Frontend)
+```bash
+cd services/mcp-gateway
+bun run lint
+```
+
+### Build (Frontend)
+```bash
+cd services/mcp-gateway
+bun run build
+```
+
+---
+
+## Environment Variables
+
+Copy `.env.example` files in each service directory. Keys consumed at runtime via `update_env` WebSocket message (sent by frontend) or from the `.env` file:
+
+| Key | Service | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | cognitive-engine | Claude claude-sonnet-4-5-20250929 |
+| `DEEPGRAM_API_KEY` | cognitive-engine | STT transcription |
+| `CARTESIA_API_KEY` | cognitive-engine | TTS synthesis |
+| `GITHUB_TOKEN` | cognitive-engine | GitHub issue/PR tools |
+| `TAVILY_API_KEY` | cognitive-engine | Web search |
+| `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` | mcp-gateway | Auth |
+
+---
+
+## Architecture: Full Voice Pipeline
+
+```
+[Tauri mic] → raw 16kHz PCM → WebSocket ws://localhost:8001/ws/voco-stream
+    → Silero VAD (detects turn-end after 1.28s silence)
+    → Deepgram STT → transcript
+    → LangGraph StateGraph (Claude claude-sonnet-4-5-20250929 + tools)
+    → If tool call → JSON-RPC 2.0 → Tauri invoke() → Rust executes locally
+    → Cartesia TTS → PCM audio streamed back to Tauri
+    → Native Rust audio playback (bypasses webview)
+```
+
+---
+
+## Python Cognitive Engine (`services/cognitive-engine/src/`)
+
+### Key Files
+| File | Role |
+|---|---|
+| `main.py` | FastAPI app; WebSocket handler; orchestrates the full pipeline per turn |
+| `graph/state.py` | `VocoState` TypedDict — all LangGraph state fields |
+| `graph/router.py` | `StateGraph` definition; conditional routing after orchestrator |
+| `graph/nodes.py` | All node functions: `context_router_node`, `orchestrator_node`, `mcp_gateway_node`, `proposal_review_node`, `command_review_node` |
+| `graph/tools.py` | LangChain `@tool` definitions (search, propose_command, GitHub, file proposals) |
+| `graph/mcp_registry.py` | Dynamic MCP server discovery from `voco-mcp.json`; wraps external tools as `StructuredTool` |
+| `graph/background_worker.py` | `BackgroundJobQueue` — Instant ACK + async task pattern |
+| `audio/stt.py` | Deepgram transcription |
+| `audio/tts.py` | Cartesia streaming synthesis |
+| `audio/vad.py` | Silero VAD chunked streaming |
+
+### LangGraph Flow
+```
+START → context_router_node → orchestrator_node
+    ↓ (conditional)
+    ├─ barge_in_detected → orchestrator_node (loop)
+    ├─ pending_proposals → proposal_review_node → orchestrator_node
+    ├─ pending_commands  → command_review_node  → orchestrator_node
+    ├─ pending_mcp_action → mcp_gateway_node → END
+    └─ (else) → END
+```
+Both `proposal_review_node` and `command_review_node` use `interrupt_before` — the graph pauses and `main.py` collects user decisions over the WebSocket before resuming with `graph.ainvoke(Command(resume=...))`.
+
+### Async Tool Pattern (Milestone 11: Instant ACK)
+When Claude calls a tool, the graph immediately returns an ACK `ToolMessage` (satisfying Anthropic's strict tool_call→tool_result requirement), then fires the real Tauri RPC as an `asyncio.Task`. On completion, `graph.aupdate_state()` injects a `SystemMessage` into the checkpoint; Claude sees the result on the user's next turn.
+
+### VocoState Fields
+- `messages`: conversation history (LangGraph `add_messages` reducer)
+- `barge_in_detected`: set by VAD when user interrupts TTS
+- `pending_mcp_action`: tool call awaiting Tauri dispatch
+- `pending_proposals` / `proposal_decisions`: file creation/edit HITL flow
+- `pending_commands` / `command_decisions`: terminal command HITL flow
+- `focused_context`: domain hint injected by `context_router_node`
+- `active_project_path`: current project for local searches
+
+---
+
+## Tauri Gateway (`services/mcp-gateway/`)
+
+### Rust Commands (`src-tauri/src/commands.rs`)
+| Command | Purpose |
+|---|---|
+| `search_project` | Run bundled `rg` sidecar against absolute project path |
+| `write_file` | Write file content; validates path stays within `project_root` |
+| `execute_command` | Run shell command in `project_path` (`cmd /C` on Windows, `sh -c` on Unix) |
+
+All commands enforce canonical path checks — no path traversal possible.
+
+### TypeScript Frontend
+| File | Role |
+|---|---|
+| `src/hooks/use-voco-socket.ts` | WebSocket connection, VAD mic streaming, message routing, Tauri `invoke()` dispatch |
+| `src/pages/AppPage.tsx` | Main app shell |
+| `src/components/VisualLedger.tsx` | Real-time LangGraph node status display |
+| `src/components/ReviewDeck.tsx` | File proposal HITL UI |
+| `src/components/CommandApproval.tsx` | Terminal command HITL UI |
+| `src/components/GhostTerminal.tsx` | Terminal output display |
+
+The `use-voco-socket.ts` hook routes incoming JSON messages by `type`:
+- `mcp_request` (method `local/*`) → `tauriInvoke()` → result sent back as `mcp_result`
+- `proposal` → updates `proposals` state → `ReviewDeck` renders
+- `command_proposal` → updates `commandProposals` state → `CommandApproval` renders
+- `ledger_update` / `ledger_clear` → `VisualLedger` state
+- `background_job_start` / `async_job_update` → background job tracking
+
+---
+
+## JSON-RPC 2.0 Contract (Python ↔ Tauri)
+
+All cross-boundary calls use this format over the WebSocket:
+
+```json
+// Request: Python → Tauri
+{ "jsonrpc": "2.0", "method": "local/search_project", "params": { "pattern": "...", "project_path": "/abs/path" }, "id": "unique-id" }
+
+// Success: Tauri → Python
+{ "jsonrpc": "2.0", "result": "<rg output>", "id": "unique-id" }
+
+// Error: Tauri → Python
+{ "jsonrpc": "2.0", "error": { "code": -32000, "message": "Security Violation: ..." }, "id": "unique-id" }
+```
+
+Method namespacing: `local/` for Rust commands, `web/` for WebMCP calls.
+
+---
+
+## External MCP Servers (`voco-mcp.json`)
+
+Configured servers (github, git, fetch, puppeteer, filesystem, postgres, linear, slack) are connected at startup via stdio. Their tools are dynamically discovered and registered into `get_all_tools()` alongside the built-in tools. Fill in API keys before enabling each server.
+
+---
+
+## Security Rules (Non-Negotiable)
+
+1. **Python has ZERO filesystem access.** All file reads/writes/executes go via JSON-RPC to Tauri.
+2. **All terminal commands** must use `propose_command` → user approves in UI → Rust executes.
+3. **All file changes** must use `propose_file_creation` / `propose_file_edit` → user approves in `ReviewDeck`.
+4. **No browser voice.** Audio capture = raw PCM over WebSocket to Python. Never `SpeechRecognition` API.
+5. **No cloud MCP.** MCP execution lives in Tauri Rust only.
+6. **No sequential LLM loops.** All AI reasoning = LangGraph `StateGraph`.
+
+---
+
+## Docs Hierarchy
+
+Read these before any architectural change:
+1. `Docs/PRD.md` — Product requirements
+2. `Docs/TDD.md` — LangGraph & streaming audio architecture
+3. `Docs/SDD.md` — Zero-trust MCP & HITL sandbox design

@@ -22,8 +22,13 @@ from typing import AsyncGenerator
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
+
+from src.billing.routes import router as billing_router
+from src.db import sync_ledger_to_supabase, update_ledger_node
+from src.graph.background_worker import BackgroundJobQueue
+from src.ide_mcp_server import attach_ide_mcp_routes
 
 from src.audio.stt import DeepgramSTT
 from src.audio.tts import CartesiaTTS
@@ -34,6 +39,55 @@ from src.graph.tools import mcp_registry
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+# Tauri app identifier from tauri.conf.json — used to locate config.json.
+_TAURI_APP_ID = "com.voco.mcp-gateway"
+_ALLOWED_ENV_KEYS = {"ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "GITHUB_TOKEN", "TTS_VOICE", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"}
+
+
+def _load_native_config() -> None:
+    """Read API keys written by Rust's `save_api_keys` into os.environ.
+
+    Path mirrors Tauri's app_config_dir per platform:
+      Windows  : %APPDATA%\\com.voco.mcp-gateway\\config.json
+      macOS    : ~/Library/Application Support/com.voco.mcp-gateway/config.json
+      Linux    : ~/.config/com.voco.mcp-gateway/config.json
+
+    Only sets keys that are not already in os.environ so .env values can still
+    override during local development.
+    """
+    import sys
+    from pathlib import Path
+
+    # Assign to a plain `str` so Pyright doesn't narrow to a platform literal
+    # and flag the non-Windows branches as unreachable.
+    platform: str = sys.platform
+    if platform == "win32":
+        base = os.environ.get("APPDATA", "")
+        config_path = Path(base) / _TAURI_APP_ID / "config.json"
+    elif platform == "darwin":
+        config_path = Path.home() / "Library" / "Application Support" / _TAURI_APP_ID / "config.json"
+    else:
+        xdg = os.environ.get("XDG_CONFIG_HOME", "")
+        base_dir = Path(xdg) if xdg else Path.home() / ".config"
+        config_path = base_dir / _TAURI_APP_ID / "config.json"
+
+    if not config_path.exists():
+        logger.debug("[Config] No native config at %s — using .env only.", config_path)
+        return
+
+    try:
+        keys: dict = json.loads(config_path.read_text(encoding="utf-8"))
+        loaded = []
+        for k, v in keys.items():
+            if k in _ALLOWED_ENV_KEYS and isinstance(v, str) and v:
+                os.environ.setdefault(k, v)   # .env wins if already set
+                loaded.append(k)
+        if loaded:
+            logger.info("[Config] Loaded from native config: %s", loaded)
+    except Exception as exc:
+        logger.warning("[Config] Failed to parse native config: %s", exc)
+
+
 def _new_thread_id() -> str:
     return f"session-{uuid.uuid4().hex[:8]}"
 
@@ -41,6 +95,8 @@ def _new_thread_id() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Load the Silero VAD model and connect external MCP servers at startup."""
+    _load_native_config()  # pre-populate os.environ from Tauri's config.json
+
     logger.info("Loading Silero VAD model…")
     app.state.silero_model = load_silero_model()
     logger.info("Silero VAD model ready.")
@@ -55,6 +111,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(title="Voco Cognitive Engine", version="0.1.0", lifespan=lifespan)
+attach_ide_mcp_routes(app)
+app.include_router(billing_router)
 
 
 @app.get("/health")
@@ -78,6 +136,13 @@ async def voco_stream(websocket: WebSocket) -> None:
     config = {"configurable": {"thread_id": thread_id}}
     logger.info("[Session] New thread: %s", thread_id)
     tts_active = False  # Track if TTS is currently playing
+
+    # Milestone 11: Instant ACK + Background Queue
+    # Each pending Tauri RPC call gets an asyncio.Future keyed on the call_id.
+    # The main receive loop resolves these futures when mcp_result arrives,
+    # waking up the background task that's waiting on them.
+    background_queue = BackgroundJobQueue()
+    _pending_rpc_futures: dict[str, asyncio.Future] = {}
 
     async def _on_barge_in() -> None:
         """Signal Tauri to halt TTS playback immediately (barge-in)."""
@@ -320,54 +385,148 @@ async def voco_stream(websocket: WebSocket) -> None:
                 config=config,
             )
 
-        # --- Step 3: Dispatch JSON-RPC to Tauri if tool was called ---
+        # --- Step 3: Instant ACK + Background Dispatch (Milestone 11) ---
+        # The ACK ToolMessage instantly resolves Claude's tool_call, satisfying
+        # Anthropic's strict requirement that an AIMessage with tool_calls must be
+        # immediately followed by a ToolMessage.  The real Tauri RPC runs inside
+        # a background asyncio.Task so the AI is free to keep talking.  When the
+        # task finishes it injects a SystemMessage into the LangGraph checkpoint
+        # via graph.aupdate_state(); Claude sees the result on the user's next turn.
         pending_action = result.get("pending_mcp_action")
         if pending_action:
             tool_name = pending_action.get("name", "")
             tool_args = pending_action.get("args", {})
-            call_id = pending_action.get("id", "rpc-1")
+            call_id = pending_action.get("id", f"rpc-{uuid.uuid4().hex[:8]}")
 
-            # Map LangGraph tool names → namespaced JSON-RPC methods (§7 contract)
-            # Note: web_search (Tavily), GitHub tools, and propose_command all
-            # execute server-side or via interrupt. Only search_codebase needs
-            # direct JSON-RPC dispatch to Tauri.
-            _fallback_path = result.get("active_project_path") or os.environ.get("VOCO_PROJECT_PATH", "")
-            method = "local/search_project"
-            params = {
-                "pattern": tool_args.get("pattern", tool_args.get("query", "")),
-                "project_path": _fallback_path,
-            }
-
+            _fallback_path = (
+                result.get("active_project_path") or os.environ.get("VOCO_PROJECT_PATH", "")
+            )
             rpc_payload = {
                 "type": "mcp_request",
                 "jsonrpc": "2.0",
                 "id": call_id,
-                "method": method,
-                "params": params,
+                "method": "local/search_project",
+                "params": {
+                    "pattern": tool_args.get("pattern", tool_args.get("query", "")),
+                    "project_path": _fallback_path,
+                },
             }
-            logger.info("[Pipeline] Dispatching JSON-RPC to Tauri: %s", rpc_payload["method"])
-            await websocket.send_json(rpc_payload)
+            job_id = uuid.uuid4().hex[:8]
+            logger.info(
+                "[Pipeline] Queuing background job %s for tool '%s' (call_id=%s)",
+                job_id, tool_name, call_id,
+            )
 
-            try:
-                raw_response = await websocket.receive_text()
-                mcp_response = json.loads(raw_response)
-            except Exception as exc:
-                logger.warning("[Pipeline] MCP response missing/closed: %s", exc)
-                mcp_response = {"result": "", "error": f"mcp_response_error: {exc}"}
+            # 1. Instant ACK ToolMessage — resolves the pending tool_call in <1ms.
+            ack_message = ToolMessage(
+                content=(
+                    f"Action queued in background with Job ID: {job_id}. "
+                    "You may continue conversing with the user."
+                ),
+                tool_call_id=call_id,
+            )
+            await _send_ledger_update(
+                domain=detected_domain,
+                context_router="completed",
+                orchestrator="active",
+                tools="active",
+            )
 
-            has_result = "result" in mcp_response or mcp_response.get("type") == "mcp_result"
-            tool_result = mcp_response.get("result", "") if has_result else ""
-            if not has_result:
-                tool_result = mcp_response.get("error", "mcp_response_empty")
-
-            tool_id = mcp_response.get("id", pending_action.get("id", "rpc-1"))
-
-            messages_with_tool_result = result["messages"] + [
-                ToolMessage(content=str(tool_result), tool_call_id=tool_id)
-            ]
+            # 2. Reinvoke graph with the ACK so Claude can acknowledge aloud
+            #    ("I've queued your search, feel free to ask me anything else.").
             result = await graph.ainvoke(
-                {"messages": messages_with_tool_result},
+                {"messages": [ack_message]},
                 config=config,
+            )
+
+            # 3. Register a Future keyed on call_id.  The main receive loop below
+            #    resolves it when Tauri sends back the matching mcp_result message.
+            rpc_future: asyncio.Future = asyncio.get_running_loop().create_future()
+            _pending_rpc_futures[call_id] = rpc_future
+
+            # 4. Background coroutine: fire the RPC and await the Future.
+            async def _do_tauri_dispatch(
+                _call_id: str = call_id,
+                _job_id: str = job_id,
+                _payload: dict = rpc_payload,
+                _future: asyncio.Future = rpc_future,
+            ) -> str:
+                logger.info(
+                    "[BackgroundJob %s] Sending Tauri RPC: %s",
+                    _job_id, _payload["method"],
+                )
+                try:
+                    await websocket.send_json(_payload)
+                except Exception as send_exc:
+                    return f"Failed to dispatch RPC to Tauri: {send_exc}"
+                try:
+                    raw = await asyncio.wait_for(asyncio.shield(_future), timeout=30.0)
+                    mcp_resp = json.loads(raw)
+                    has_res = "result" in mcp_resp or mcp_resp.get("type") == "mcp_result"
+                    return (
+                        str(mcp_resp.get("result", ""))
+                        if has_res
+                        else str(mcp_resp.get("error", "no result returned"))
+                    )
+                except asyncio.TimeoutError:
+                    _pending_rpc_futures.pop(_call_id, None)
+                    return f"Background job {_job_id} timed out after 30 seconds."
+
+            # 5. Completion callback: inject the result into LangGraph state so
+            #    Claude discovers it on the user's next spoken turn.
+            async def _on_job_complete(
+                _job_id: str,
+                result_str: str,
+                _config: dict = config,
+                _tool_name: str = tool_name,
+                _domain: str = detected_domain,
+            ) -> None:
+                notification = SystemMessage(
+                    content=(
+                        f"[BACKGROUND JOB COMPLETE] Job {_job_id} "
+                        f"({_tool_name}): {result_str[:2000]}"
+                    )
+                )
+                try:
+                    await graph.aupdate_state(_config, {"messages": [notification]})
+                    logger.info(
+                        "[BackgroundJob %s] Result injected into LangGraph state.", _job_id
+                    )
+                except Exception as state_exc:
+                    logger.error(
+                        "[BackgroundJob %s] Failed to update state: %s", _job_id, state_exc
+                    )
+                # Persist final node status to Supabase Logic Ledger.
+                await update_ledger_node(
+                    session_id=thread_id,
+                    node_id="3",
+                    status="completed",
+                    execution_output=result_str,
+                )
+
+                # Notify the frontend so it can update the Visual Ledger.
+                try:
+                    await websocket.send_json({
+                        "type": "async_job_update",
+                        "job_id": _job_id,
+                        "tool_name": _tool_name,
+                        "ledger_node_id": "3",
+                        "status": "completed",
+                        "result": result_str[:500],
+                    })
+                except Exception:
+                    pass  # WebSocket may have closed before the job finished.
+
+            # 6. Fire and forget — the task runs concurrently with TTS streaming.
+            background_queue.submit(job_id, _do_tauri_dispatch(), _on_job_complete)
+            # Notify the frontend immediately so it can render the spinning node.
+            await websocket.send_json({
+                "type": "background_job_start",
+                "job_id": job_id,
+                "tool_name": tool_name,
+            })
+            logger.info(
+                "[Pipeline] Background job %s dispatched; proceeding to TTS.", job_id
             )
 
         # --- Step 4: Extract final text and synthesise via Cartesia TTS ---
@@ -405,6 +564,22 @@ async def voco_stream(websocket: WebSocket) -> None:
         await asyncio.sleep(0.5)
         vad.reset()
         audio_buffer = bytearray()
+
+        # --- Supabase Logic Ledger sync ---
+        domain_icon = {"database": "Database", "ui": "FileCode2", "api": "Terminal", "devops": "Terminal", "git": "Terminal", "general": "FileCode2"}
+        _icon = domain_icon.get(detected_domain, "FileCode2")
+        await sync_ledger_to_supabase(
+            session_id=thread_id,
+            user_id="local",
+            project_id=result.get("active_project_path") or os.environ.get("VOCO_PROJECT_PATH", "unknown"),
+            domain=detected_domain,
+            nodes=[
+                {"id": "1", "iconType": _icon,        "title": "Domain Paged",  "description": f"Loaded {detected_domain} context", "status": "completed"},
+                {"id": "2", "iconType": "FileCode2",  "title": "Orchestrator",  "description": "Claude reasoning",                   "status": "completed"},
+                {"id": "3", "iconType": "Terminal",   "title": "Execute",       "description": "Run actions",                         "status": "completed"},
+            ],
+            session_status="active",
+        )
 
         await _send_ledger_clear()
 
@@ -448,10 +623,22 @@ async def voco_stream(websocket: WebSocket) -> None:
                     msg_type = payload.get("type", "")
 
                     if msg_type == "mcp_result":
-                        logger.debug("[WS] Received out-of-band mcp_result: %s", payload)
+                        # Route Tauri's response to the awaiting background job.
+                        msg_id = payload.get("id", "")
+                        future = _pending_rpc_futures.get(msg_id)
+                        if future and not future.done():
+                            future.set_result(message["text"])
+                            logger.info(
+                                "[WS] Routed mcp_result (call_id=%s) to background job.", msg_id
+                            )
+                        else:
+                            logger.debug(
+                                "[WS] Received mcp_result with no pending future (call_id=%s).",
+                                msg_id,
+                            )
                     elif msg_type == "update_env":
                         env_patch = payload.get("env", {})
-                        allowed_keys = {"ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "GITHUB_TOKEN", "TTS_VOICE"}
+                        allowed_keys = {"ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "GITHUB_TOKEN", "TTS_VOICE", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"}
                         for k, v in env_patch.items():
                             if k in allowed_keys and isinstance(v, str) and v:
                                 os.environ[k] = v
@@ -465,3 +652,4 @@ async def voco_stream(websocket: WebSocket) -> None:
     finally:
         vad.reset()
         audio_buffer = bytearray()
+        background_queue.cancel_all()

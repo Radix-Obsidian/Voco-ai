@@ -1,4 +1,4 @@
-import { Settings, MessageSquare, ChevronDown, FolderSync } from "lucide-react";
+import { Settings, MessageSquare, ChevronDown, FolderSync, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import vocoLogo from "@/assets/voco-logo.svg";
 import vocoIcon from "@/assets/voco-icon.svg";
@@ -6,9 +6,10 @@ import vocoIcon from "@/assets/voco-icon.svg";
 interface HeaderProps {
   onOpenHistory?: () => void;
   onOpenSettings?: () => void;
+  onOpenPricing?: () => void;
 }
 
-const Header = ({ onOpenSettings }: HeaderProps) => {
+const Header = ({ onOpenSettings, onOpenPricing }: HeaderProps) => {
   return (
     <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-5 h-14 bg-[#0A0A0A]/90 backdrop-blur-md border-b border-white/[0.06]">
       {/* Left: Logo */}
@@ -45,15 +46,18 @@ const Header = ({ onOpenSettings }: HeaderProps) => {
         </button>
       </div>
 
-      {/* Right: Quota + Settings */}
+      {/* Right: Upgrade CTA + Settings */}
       <div className="flex items-center gap-3">
-        {/* Quota pill */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs">
-          <span className="text-zinc-400">0 / 5 free</span>
-          <div className="w-12 h-1 rounded-full bg-white/[0.06] overflow-hidden">
-            <div className="w-0 h-full rounded-full bg-voco-emerald" />
-          </div>
-        </div>
+        {/* Upgrade button */}
+        <Button
+          onClick={onOpenPricing}
+          size="sm"
+          className="h-7 px-3 gap-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 text-xs font-medium"
+          variant="ghost"
+        >
+          <Zap className="h-3 w-3" />
+          Upgrade
+        </Button>
 
         <Button
           variant="ghost"
