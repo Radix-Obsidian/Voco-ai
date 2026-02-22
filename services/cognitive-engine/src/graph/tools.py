@@ -230,6 +230,56 @@ def scan_vulnerabilities(project_path: str) -> dict:
 
 
 @tool
+def generate_and_preview_mvp(app_description: str, html_code: str) -> dict:
+    """Generate a complete MVP app and instantly serve it in the Live Sandbox.
+
+    Use this when the user asks to build, prototype, or preview ANY kind of app,
+    website, dashboard, tool, or UI. This is the PRIMARY tool for non-technical
+    users — the app appears in the Live Sandbox preview immediately with ZERO setup.
+
+    You MUST generate a complete, self-contained HTML document that includes:
+    - Tailwind CSS via CDN: <script src="https://cdn.tailwindcss.com"></script>
+    - Optional React via CDN + Babel for interactive UIs
+    - Dark premium design: bg-gray-950 background, white text, rounded-2xl cards,
+      subtle ring-white/10 borders, voco-emerald (#10b981) accent colour
+    - All JavaScript inline — NO npm, NO build steps, NO external imports
+    The app is visible on the right side of the Voco UI instantly. Never show raw
+    code to the user unless they explicitly ask for it.
+
+    Args:
+        app_description: Brief description of what the app does (for logging).
+        html_code: Complete <!DOCTYPE html>...</html> document, self-contained.
+
+    Returns:
+        A signal dict that main.py intercepts to serve the sandbox preview.
+    """
+    return {
+        "method": "local/sandbox_preview",
+        "params": {"app_description": app_description, "html_code": html_code},
+    }
+
+
+@tool
+def update_sandbox_preview(html_code: str) -> dict:
+    """Update the Live Sandbox with revised HTML code for iterative edits.
+
+    Use this when the user asks to change, modify, tweak, or iterate on anything
+    currently visible in the sandbox preview. Changes appear instantly.
+    Always provide the COMPLETE updated HTML document, not just the changed parts.
+
+    Args:
+        html_code: Complete updated <!DOCTYPE html>...</html> document.
+
+    Returns:
+        A signal dict that main.py intercepts to update the sandbox.
+    """
+    return {
+        "method": "local/sandbox_preview",
+        "params": {"app_description": "update", "html_code": html_code},
+    }
+
+
+@tool
 def propose_file_edit(file_path: str, diff: str, description: str) -> dict:
     """Propose editing an existing file in the user's project.
 
@@ -270,5 +320,7 @@ def get_all_tools():
         propose_file_edit,
         analyze_screen,
         scan_vulnerabilities,
+        generate_and_preview_mvp,
+        update_sandbox_preview,
         *mcp_registry.get_tools(),
     ]

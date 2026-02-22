@@ -78,6 +78,8 @@ export function useVocoSocket() {
   const [commandProposals, setCommandProposals] = useState<CommandProposal[]>([]);
   const [ledgerState, setLedgerState] = useState<LedgerState | null>(null);
   const [backgroundJobs, setBackgroundJobs] = useState<BackgroundJob[]>([]);
+  const [sandboxUrl, setSandboxUrl] = useState<string | null>(null);
+  const [sandboxRefreshKey, setSandboxRefreshKey] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRequests = useRef<Map<string, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>>(new Map());
 
@@ -409,6 +411,15 @@ export function useVocoSocket() {
             ws.send(JSON.stringify({ type: "screen_frames", id: requestId, frames: [], media_type: "image/jpeg" }));
             console.warn("[VocoEyes] get_recent_frames failed:", err);
           }
+        } else if (msg.type === "sandbox_live") {
+          // Phase 5: Live Sandbox — first generation
+          setSandboxUrl(msg.url as string);
+          setSandboxRefreshKey((prev) => prev + 1);
+          console.log("[Sandbox] Live at", msg.url);
+        } else if (msg.type === "sandbox_updated") {
+          // Phase 5: Live Sandbox — iterative update (URL stays the same)
+          setSandboxRefreshKey((prev) => prev + 1);
+          console.log("[Sandbox] Preview refreshed.");
         } else if (msg.type === "scan_security_request") {
           // Phase 4: Voco Auto-Sec — run local security scan via Rust and send findings back
           const requestId: string = msg.id ?? "";
@@ -493,5 +504,8 @@ export function useVocoSocket() {
     ledgerState,
     backgroundJobs,
     wsRef,
+    sandboxUrl,
+    sandboxRefreshKey,
+    setSandboxUrl,
   };
 }
