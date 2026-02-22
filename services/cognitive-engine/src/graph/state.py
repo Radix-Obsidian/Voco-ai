@@ -32,3 +32,4 @@ class VocoState(TypedDict):
     proposal_decisions: NotRequired[list[dict]]
     pending_commands: NotRequired[list[dict]]
     command_decisions: NotRequired[list[dict]]
+    focused_context: NotRequired[str]

@@ -4,35 +4,35 @@
 
 @layer base {
   :root {
-    /* Voco palette (Apple HIG-inspired: restrained accents on deep neutral) */
-    --background: 0 0% 3%; /* Deep Space Black */
-    --foreground: 0 0% 100%; /* Sparkle White */
-    --card: 0 0% 6%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 8%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 270 100% 26%; /* Deep Indigo #4B0082 */
-    --primary-foreground: 0 0% 100%;
-    --secondary: 180 100% 50%; /* Electric Cyan */
-    --secondary-foreground: 0 0% 0%;
-    --muted: 270 25% 18%;
-    --muted-foreground: 0 0% 70%;
-    --accent: 300 100% 50%; /* Neon Magenta */
+    /* Voco V2 — Strict dark mode + glowing emerald */
+    --background: 0 0% 4%; /* #0A0A0A */
+    --foreground: 0 0% 95%; /* near-white */
+    --card: 0 0% 7%; /* #121212 */
+    --card-foreground: 0 0% 95%;
+    --popover: 0 0% 7%;
+    --popover-foreground: 0 0% 95%;
+    --primary: 155 100% 50%; /* #00FFAA voco-emerald */
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 0 0% 70%;
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 155 100% 50%; /* emerald accent */
     --accent-foreground: 0 0% 0%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 270 35% 25%;
-    --input: 270 35% 20%;
-    --ring: 180 100% 50%; /* Cyan ring */
+    --border: 0 0% 14%;
+    --input: 0 0% 14%;
+    --ring: 155 100% 50%;
     --radius: 0.5rem;
-    --sidebar-background: 0 0% 4%;
-    --sidebar-foreground: 0 0% 92%;
-    --sidebar-primary: 270 100% 22%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 180 100% 50%;
+    --sidebar-background: 0 0% 5%;
+    --sidebar-foreground: 0 0% 85%;
+    --sidebar-primary: 155 100% 45%;
+    --sidebar-primary-foreground: 0 0% 0%;
+    --sidebar-accent: 155 100% 50%;
     --sidebar-accent-foreground: 0 0% 0%;
-    --sidebar-border: 270 35% 25%;
-    --sidebar-ring: 180 100% 50%;
+    --sidebar-border: 0 0% 14%;
+    --sidebar-ring: 155 100% 50%;
   }
 }
 
@@ -42,7 +42,8 @@
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
   }
 }
 
@@ -53,7 +54,7 @@
   inset: 0;
   z-index: 1;
   pointer-events: none;
-  opacity: 0.07;
+  opacity: 0.04;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-repeat: repeat;
   background-size: 256px 256px;
@@ -77,6 +78,19 @@
   background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: shimmer 3s linear infinite;
+}
+
+/* Emerald glow utilities */
+.glow-emerald {
+  box-shadow: 0 0 15px rgba(0, 255, 170, 0.4);
+}
+
+.glow-emerald-lg {
+  box-shadow: 0 0 30px rgba(0, 255, 170, 0.5), 0 0 60px rgba(0, 255, 170, 0.2);
+}
+
+.glow-emerald-text {
+  text-shadow: 0 0 10px rgba(0, 255, 170, 0.5);
 }
 
 /* Article prose styles */
@@ -115,4 +129,33 @@
 }
 .article-prose pre code {
   @apply text-foreground bg-transparent p-0;
+}
+
+/* Voco Premium Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 255, 170, 0.2);
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 255, 170, 0.5);
+  box-shadow: 0 0 8px rgba(0, 255, 170, 0.4);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 255, 170, 0.25) transparent;
 }

@@ -57,33 +57,53 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        "voco-emerald": {
+          DEFAULT: "#00FFAA",
+          50: "#E6FFF5",
+          100: "#B3FFE0",
+          200: "#80FFCC",
+          300: "#4DFFB8",
+          400: "#1AFFA3",
+          500: "#00FFAA",
+          600: "#00CC88",
+          700: "#009966",
+          800: "#006644",
+          900: "#003322",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
       },
+      boxShadow: {
+        "emerald-glow": "0 0 15px rgba(0, 255, 170, 0.4)",
+        "emerald-glow-lg": "0 0 30px rgba(0, 255, 170, 0.5), 0 0 60px rgba(0, 255, 170, 0.2)",
+        "emerald-glow-sm": "0 0 8px rgba(0, 255, 170, 0.3)",
+      },
       keyframes: {
         "accordion-down": {
-          from: {
-            height: "0",
-          },
-          to: {
-            height: "var(--radix-accordion-content-height)",
-          },
+          from: { height: "0" },
+          to: { height: "var(--radix-accordion-content-height)" },
         },
         "accordion-up": {
-          from: {
-            height: "var(--radix-accordion-content-height)",
-          },
-          to: {
-            height: "0",
-          },
+          from: { height: "var(--radix-accordion-content-height)" },
+          to: { height: "0" },
+        },
+        "orb-pulse": {
+          "0%, 100%": { boxShadow: "0 0 20px rgba(0, 255, 170, 0.3), 0 0 60px rgba(0, 255, 170, 0.1)" },
+          "50%": { boxShadow: "0 0 40px rgba(0, 255, 170, 0.5), 0 0 80px rgba(0, 255, 170, 0.2)" },
+        },
+        "orb-listening": {
+          "0%, 100%": { transform: "scale(1)", boxShadow: "0 0 30px rgba(0, 255, 170, 0.4)" },
+          "50%": { transform: "scale(1.05)", boxShadow: "0 0 50px rgba(0, 255, 170, 0.6), 0 0 100px rgba(0, 255, 170, 0.2)" },
         },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "orb-pulse": "orb-pulse 3s ease-in-out infinite",
+        "orb-listening": "orb-listening 1.5s ease-in-out infinite",
       },
     },
   },

@@ -38,6 +38,19 @@ export interface Proposal {
   status: "pending" | "approved" | "rejected";
 }
 
+export interface LedgerNode {
+  id: string;
+  iconType: string;
+  title: string;
+  description: string;
+  status: "completed" | "active" | "pending";
+}
+
+export interface LedgerState {
+  domain: string;
+  nodes: LedgerNode[];
+}
+
 export interface CommandProposal {
   command_id: string;
   command: string;
@@ -49,16 +62,18 @@ export interface CommandProposal {
 export function useVocoSocket() {
   const [isConnected, setIsConnected] = useState(false);
   const [bargeInActive, setBargeInActive] = useState(false);
+  const ttsActiveRef = useRef(false);
   const [terminalOutput, setTerminalOutput] = useState<TerminalOutput | null>(null);
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [commandProposals, setCommandProposals] = useState<CommandProposal[]>([]);
+  const [ledgerState, setLedgerState] = useState<LedgerState | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRequests = useRef<Map<string, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>>(new Map());
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const audioChunksRef = useRef<Uint8Array[]>([]);
 
   const sendAudioChunk = useCallback((bytes: Uint8Array) => {
+    // Suppress mic input while TTS is playing to prevent echo/feedback loop
+    if (ttsActiveRef.current) return;
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(bytes.buffer);
@@ -70,40 +85,26 @@ export function useVocoSocket() {
       wsRef.current.close();
       wsRef.current = null;
     }
-    if (audioCtxRef.current) {
-      audioCtxRef.current.close();
-      audioCtxRef.current = null;
-    }
   }, []);
 
-  const ensureAudioContext = useCallback(() => {
-    if (!audioCtxRef.current) {
-      audioCtxRef.current = new AudioContext({ sampleRate: 16000 });
-    }
-    return audioCtxRef.current;
-  }, []);
+  // --- Native Rust audio (bypasses webview entirely) ---
 
-  const playPcm16 = useCallback(async (pcm: Uint8Array) => {
+  const playNativeAudio = useCallback(async (pcm: Uint8Array) => {
     if (!pcm.length) return;
-    const ctx = ensureAudioContext();
-
-    // Convert Int16 PCM to Float32 for WebAudio
-    const samples = new Float32Array(pcm.length / 2);
-    for (let i = 0; i < samples.length; i++) {
-      const lo = pcm[i * 2];
-      const hi = pcm[i * 2 + 1];
-      const int16 = (hi << 8) | lo;
-      samples[i] = (int16 > 0x7fff ? int16 - 0x10000 : int16) / 0x8000;
+    try {
+      await tauriInvoke("play_native_audio", { audioBytes: Array.from(pcm) });
+    } catch (err) {
+      console.error("[NativeAudio] Playback failed:", err);
     }
+  }, []);
 
-    const buffer = ctx.createBuffer(1, samples.length, 16000);
-    buffer.copyToChannel(samples, 0, 0);
-
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(ctx.destination);
-    source.start();
-  }, [ensureAudioContext]);
+  const haltNativeAudio = useCallback(async () => {
+    try {
+      await tauriInvoke("halt_native_audio");
+    } catch (err) {
+      console.error("[NativeAudio] Halt failed:", err);
+    }
+  }, []);
 
   const sendJsonRpcResponse = useCallback((id: string, result: unknown) => {
     const ws = wsRef.current;
@@ -305,10 +306,10 @@ export function useVocoSocket() {
     };
 
     ws.onmessage = async (event) => {
-      // Handle binary TTS audio frames
+      // Handle binary TTS audio frames → pipe directly to Rust native audio
       if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
         const buf = event.data instanceof Blob ? new Uint8Array(await event.data.arrayBuffer()) : new Uint8Array(event.data);
-        audioChunksRef.current.push(buf);
+        playNativeAudio(buf);
         return;
       }
 
@@ -317,26 +318,25 @@ export function useVocoSocket() {
 
         if (msg.type === "control") {
           if (msg.action === "halt_audio_playback") {
+            haltNativeAudio();
             setBargeInActive(true);
-            console.log("[Barge-in] Halting audio!");
+            console.log("[Barge-in] Halting native audio!");
           } else if (msg.action === "turn_ended") {
             setBargeInActive(false);
           } else if (msg.action === "tts_start") {
-            audioChunksRef.current = [];
+            ttsActiveRef.current = true;
+            console.log("[TTS] Active — mic suppressed to prevent echo");
           } else if (msg.action === "tts_end") {
-            const chunks = audioChunksRef.current;
-            audioChunksRef.current = [];
-            const total = chunks.reduce((acc, c) => acc + c.length, 0);
-            if (total > 0) {
-              const merged = new Uint8Array(total);
-              let offset = 0;
-              for (const c of chunks) {
-                merged.set(c, offset);
-                offset += c.length;
-              }
-              playPcm16(merged);
-            }
+            // Delay mic resume slightly so tail-end audio doesn't trigger VAD
+            setTimeout(() => {
+              ttsActiveRef.current = false;
+              console.log("[TTS] Ended — mic resumed");
+            }, 600);
           }
+        } else if (msg.type === "ledger_update") {
+          setLedgerState(msg.payload);
+        } else if (msg.type === "ledger_clear") {
+          setLedgerState(null);
         } else if (msg.type === "command_proposal") {
           setCommandProposals((prev) => [
             ...prev,
@@ -391,6 +391,7 @@ export function useVocoSocket() {
 
     ws.onclose = () => {
       setIsConnected(false);
+      setLedgerState(null);
       console.log("[VocoSocket] Disconnected");
     };
 
@@ -399,7 +400,7 @@ export function useVocoSocket() {
     };
 
     wsRef.current = ws;
-  }, [disconnect, handleLocalSearch, handleExecuteCommand, handleWriteFile, handleWebDiscovery]);
+  }, [disconnect, playNativeAudio, haltNativeAudio, handleLocalSearch, handleExecuteCommand, handleWriteFile, handleWebDiscovery]);
 
   useEffect(() => {
     return () => {
@@ -421,5 +422,7 @@ export function useVocoSocket() {
     setSearchResults,
     submitProposalDecisions,
     submitCommandDecisions,
+    ledgerState,
+    wsRef,
   };
 }

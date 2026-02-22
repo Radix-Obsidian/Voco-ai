@@ -13,6 +13,64 @@ from .tools import get_all_tools
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Domain-aware context routing
+# ---------------------------------------------------------------------------
+
+_DOMAIN_KEYWORDS: dict[str, tuple[list[str], str]] = {
+    "ui": (
+        ["component", "button", "css", "style", "layout", "tailwind", "react", "html", "frontend", "ui", "modal", "form", "page"],
+        "Focus: UI/Frontend. Prioritize component structure, styling, and user-facing code.",
+    ),
+    "database": (
+        ["database", "sql", "query", "migration", "schema", "table", "postgres", "sqlite", "prisma", "drizzle", "supabase", "db"],
+        "Focus: Database. Prioritize schema design, queries, migrations, and data integrity.",
+    ),
+    "api": (
+        ["api", "endpoint", "route", "rest", "graphql", "fetch", "request", "response", "middleware", "controller", "handler", "server"],
+        "Focus: API/Backend. Prioritize endpoint design, request handling, and server logic.",
+    ),
+    "devops": (
+        ["docker", "deploy", "ci", "cd", "pipeline", "kubernetes", "k8s", "nginx", "env", "build", "dockerfile", "yaml", "terraform", "aws", "cloud"],
+        "Focus: DevOps/Infrastructure. Prioritize deployment, configuration, and infrastructure.",
+    ),
+    "git": (
+        ["git", "commit", "branch", "merge", "rebase", "pull request", "pr", "push", "diff", "stash", "checkout"],
+        "Focus: Git/Version Control. Prioritize repository operations and collaboration workflow.",
+    ),
+}
+
+
+def _detect_domain(text: str) -> tuple[str, str]:
+    """Score keyword hits and return the best-matching (domain, context) pair."""
+    text_lower = text.lower()
+    best_domain = "general"
+    best_score = 0
+    best_context = ""
+
+    for domain, (keywords, context) in _DOMAIN_KEYWORDS.items():
+        score = sum(1 for kw in keywords if kw in text_lower)
+        if score > best_score:
+            best_score = score
+            best_domain = domain
+            best_context = context
+
+    return best_domain, best_context
+
+
+async def context_router_node(state: VocoState) -> dict:
+    """Detect the domain of the user's last message and inject focused context."""
+    messages = state.get("messages", [])
+    if not messages:
+        return {}
+
+    last_text = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
+    domain, context = _detect_domain(last_text)
+    logger.info("[Context Router] Detected domain: %s", domain)
+
+    return {"focused_context": context}
+
+
 _SYSTEM_PROMPT = (
     "You are Voco, an elite voice-native AI coding assistant. You operate like Anthropic's 'Claude Code', "
     "but through a faceless, voice-first desktop interface.\n\n"
@@ -33,11 +91,15 @@ _SYSTEM_PROMPT = (
 )
 
 _model_with_tools = None
+_bound_tool_count = 0
 
 
 def _get_model():
-    global _model_with_tools
-    if _model_with_tools is None:
+    """Lazily create the Claude model, re-binding tools when the registry grows."""
+    global _model_with_tools, _bound_tool_count
+
+    all_tools = get_all_tools()
+    if _model_with_tools is None or len(all_tools) != _bound_tool_count:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
             raise RuntimeError(
@@ -47,7 +109,10 @@ def _get_model():
             model="claude-sonnet-4-5-20250929",
             temperature=0,
             api_key=api_key,
-        ).bind_tools(get_all_tools())
+        ).bind_tools(all_tools)
+        _bound_tool_count = len(all_tools)
+        logger.info("[Model] Bound %d tools (including %d external MCP tools).",
+                     _bound_tool_count, _bound_tool_count - 7)
     return _model_with_tools
 
 
@@ -61,8 +126,11 @@ async def orchestrator_node(state: VocoState) -> dict:
     last_message = state["messages"][-1]
     logger.info("[Orchestrator 🧠] User said: %s", last_message.content)
 
+    focused = state.get("focused_context", "")
+    system_prompt = f"{focused}\n\n{_SYSTEM_PROMPT}" if focused else _SYSTEM_PROMPT
+
     response: AIMessage = await _get_model().ainvoke(
-        [SystemMessage(content=_SYSTEM_PROMPT), *state["messages"]]
+        [SystemMessage(content=system_prompt), *state["messages"]]
     )
 
     logger.info(

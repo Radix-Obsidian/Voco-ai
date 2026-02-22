@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import uuid
 from typing import AsyncGenerator
 
+import websockets
+
 logger = logging.getLogger(__name__)
 
-_DEFAULT_VOICE_ID = "248be419-c632-4f23-adf6-5706a7c7d403"  # Cartesia "Jessica"
+_DEFAULT_VOICE_ID = "ee7ea9f8-c0c1-498c-9279-764d6b56d189"  # Cartesia "Oliver - Customer Chap"
 
 
 class CartesiaTTS:
@@ -40,10 +43,7 @@ class CartesiaTTS:
         self._sample_rate = sample_rate
 
     async def synthesize(self, text: str) -> bytes:
-        """Synthesize *text* and return the complete PCM-16 audio as bytes.
-
-        Suitable for short responses where buffering is acceptable.
-        """
+        """Synthesize *text* and return the complete PCM-16 audio as bytes."""
         chunks: list[bytes] = []
         async for chunk in self.synthesize_stream(text):
             chunks.append(chunk)
@@ -54,7 +54,9 @@ class CartesiaTTS:
 
         Uses Cartesia's WebSocket streaming endpoint for sub-100ms TTFB.
         """
-        import httpx
+        if not self._api_key:
+            logger.error("[TTS] CARTESIA_API_KEY is empty — cannot synthesize audio.")
+            return
 
         ws_url = (
             f"{self.WS_URL}"
@@ -62,33 +64,35 @@ class CartesiaTTS:
             f"&cartesia_version={self.API_VERSION}"
         )
 
-        async with httpx.AsyncClient() as client:
-            async with client.websocket_connect(ws_url) as ws:
-                request_id = str(uuid.uuid4())
-                payload = {
-                    "model_id": "sonic-english",
-                    "transcript": text,
-                    "voice": {
-                        "mode": "id",
-                        "id": self._voice_id,
-                    },
-                    "output_format": {
-                        "container": "raw",
-                        "encoding": "pcm_s16le",
-                        "sample_rate": self._sample_rate,
-                    },
-                    "context_id": request_id,
-                    "continue": False,
-                }
-                await ws.send(json.dumps(payload))
-                logger.info("[TTS] Synthesizing: %.80s…", text)
+        request_id = str(uuid.uuid4())
+        payload = json.dumps({
+            "model_id": "sonic-english",
+            "transcript": text,
+            "voice": {
+                "mode": "id",
+                "id": self._voice_id,
+            },
+            "output_format": {
+                "container": "raw",
+                "encoding": "pcm_s16le",
+                "sample_rate": self._sample_rate,
+            },
+            "context_id": request_id,
+            "continue": False,
+        })
 
-                while True:
-                    raw = await ws.receive()
+        try:
+            async with websockets.connect(ws_url) as ws:
+                await ws.send(payload)
+                logger.info("[TTS] Synthesizing: %.80s...", text)
+
+                async for raw in ws:
+                    # Binary frame = raw PCM audio
                     if isinstance(raw, bytes):
                         yield raw
                         continue
 
+                    # Text frame = JSON control message
                     try:
                         msg = json.loads(raw)
                     except json.JSONDecodeError:
@@ -102,5 +106,9 @@ class CartesiaTTS:
                         logger.error("[TTS] Cartesia error: %s", msg)
                         break
                     elif "data" in msg:
-                        import base64
                         yield base64.b64decode(msg["data"])
+
+        except websockets.exceptions.InvalidStatusCode as exc:
+            logger.error("[TTS] Cartesia rejected connection (status %s) — check CARTESIA_API_KEY.", exc.status_code)
+        except Exception as exc:
+            logger.error("[TTS] WebSocket error: %s", exc)

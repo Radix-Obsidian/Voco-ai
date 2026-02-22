@@ -3,7 +3,7 @@
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from .nodes import command_review_node, mcp_gateway_node, orchestrator_node, proposal_review_node
+from .nodes import command_review_node, context_router_node, mcp_gateway_node, orchestrator_node, proposal_review_node
 from .state import VocoState
 
 
@@ -22,12 +22,14 @@ def _route_after_orchestrator(state: VocoState) -> str:
 
 builder = StateGraph(VocoState)
 
+builder.add_node("context_router_node", context_router_node)
 builder.add_node("orchestrator_node", orchestrator_node)
 builder.add_node("mcp_gateway_node", mcp_gateway_node)
 builder.add_node("proposal_review_node", proposal_review_node)
 builder.add_node("command_review_node", command_review_node)
 
-builder.add_edge(START, "orchestrator_node")
+builder.add_edge(START, "context_router_node")
+builder.add_edge("context_router_node", "orchestrator_node")
 builder.add_conditional_edges(
     "orchestrator_node",
     _route_after_orchestrator,

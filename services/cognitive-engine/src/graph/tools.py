@@ -10,6 +10,11 @@ import os
 import uuid
 from langchain_core.tools import tool
 
+from .mcp_registry import UniversalMCPRegistry
+
+# Singleton registry — call ``await mcp_registry.initialize()`` at app startup
+mcp_registry = UniversalMCPRegistry()
+
 
 @tool
 def search_codebase(pattern: str, project_path: str) -> dict:
@@ -200,7 +205,11 @@ def propose_file_edit(file_path: str, diff: str, description: str) -> dict:
 
 
 def get_all_tools():
-    """Return all tools, lazily instantiating Tavily so .env is loaded first."""
+    """Return all tools, lazily instantiating Tavily so .env is loaded first.
+
+    Dynamic MCP tools (from ``voco-mcp.json``) are appended after
+    ``mcp_registry.initialize()`` is awaited during FastAPI startup.
+    """
     return [
         search_codebase,
         propose_command,
@@ -209,4 +218,5 @@ def get_all_tools():
         github_create_pr,
         propose_file_creation,
         propose_file_edit,
+        *mcp_registry.get_tools(),
     ]

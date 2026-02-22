@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -28,21 +29,29 @@ from src.audio.stt import DeepgramSTT
 from src.audio.tts import CartesiaTTS
 from src.audio.vad import VocoVADStreamer, load_silero_model
 from src.graph.router import graph
+from src.graph.tools import mcp_registry
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-_THREAD_ID = "main-session"
+def _new_thread_id() -> str:
+    return f"session-{uuid.uuid4().hex[:8]}"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Load the Silero VAD model once at startup; share across all connections."""
+    """Load the Silero VAD model and connect external MCP servers at startup."""
     logger.info("Loading Silero VAD model…")
     app.state.silero_model = load_silero_model()
     logger.info("Silero VAD model ready.")
+
+    logger.info("Initialising Universal MCP Registry…")
+    await mcp_registry.initialize()
+    logger.info("MCP Registry ready — %d external tools.", len(mcp_registry.get_tools()))
+
     yield
-    # Nothing to teardown — model is in-process memory, GC handles it
+
+    await mcp_registry.shutdown()
 
 
 app = FastAPI(title="Voco Cognitive Engine", version="0.1.0", lifespan=lifespan)
@@ -56,13 +65,18 @@ async def health() -> dict:
 @app.websocket("/ws/voco-stream")
 async def voco_stream(websocket: WebSocket) -> None:
     await websocket.accept()
-    vad = VocoVADStreamer(websocket.app.state.silero_model)
+    vad = VocoVADStreamer(
+        websocket.app.state.silero_model,
+        silence_frames_for_turn_end=40,  # 40 × 32ms = 1.28s silence before turn-end (was 800ms)
+    )
 
-    stt = DeepgramSTT(api_key=os.environ["DEEPGRAM_API_KEY"])
+    stt = DeepgramSTT(api_key=os.environ.get("DEEPGRAM_API_KEY", ""))
     tts = CartesiaTTS(api_key=os.environ.get("CARTESIA_API_KEY", ""))
 
     audio_buffer: bytearray = bytearray()
-    config = {"configurable": {"thread_id": _THREAD_ID}}
+    thread_id = _new_thread_id()
+    config = {"configurable": {"thread_id": thread_id}}
+    logger.info("[Session] New thread: %s", thread_id)
     tts_active = False  # Track if TTS is currently playing
 
     async def _on_barge_in() -> None:
@@ -70,6 +84,45 @@ async def voco_stream(websocket: WebSocket) -> None:
         nonlocal tts_active
         if tts_active:  # Only trigger barge-in when TTS is actually playing
             await websocket.send_json({"type": "control", "action": "halt_audio_playback"})
+
+    _last_detected_domain = "general"
+
+    async def _send_ledger_update(
+        domain: str = "general",
+        context_router: str = "pending",
+        orchestrator: str = "pending",
+        tools: str = "pending",
+    ) -> None:
+        """Emit a ledger_update message so the frontend can render the Visual Ledger."""
+        nonlocal _last_detected_domain
+        _last_detected_domain = domain
+
+        # Map domain to appropriate icon types
+        domain_icon = {
+            "database": "Database",
+            "ui": "FileCode2",
+            "api": "Terminal",
+            "devops": "Terminal",
+            "git": "Terminal",
+            "general": "FileCode2",
+        }
+        icon = domain_icon.get(domain, "FileCode2")
+
+        await websocket.send_json({
+            "type": "ledger_update",
+            "payload": {
+                "domain": domain.title(),
+                "nodes": [
+                    {"id": "1", "iconType": icon, "title": "Domain Paged", "description": f"Loaded {domain} context", "status": context_router},
+                    {"id": "2", "iconType": "FileCode2", "title": "Orchestrator", "description": "Claude reasoning", "status": orchestrator},
+                    {"id": "3", "iconType": "Terminal", "title": "Execute", "description": "Run actions", "status": tools},
+                ],
+            },
+        })
+
+    async def _send_ledger_clear() -> None:
+        """Clear the Visual Ledger from the frontend."""
+        await websocket.send_json({"type": "ledger_clear"})
 
     async def _on_turn_end() -> None:
         """Full pipeline: STT → LangGraph → (optional JSON-RPC) → TTS."""
@@ -82,22 +135,39 @@ async def voco_stream(websocket: WebSocket) -> None:
             logger.warning("[Pipeline] Turn ended with empty audio buffer — skipping.")
             return
 
+        # Require a minimum buffer size to avoid transcribing noise/clicks
+        if len(audio_buffer) < 6400:  # < 200ms of audio at 16kHz mono 16-bit
+            logger.info("[Pipeline] Audio buffer too small (%d bytes) — likely noise, skipping.", len(audio_buffer))
+            audio_buffer = bytearray()
+            return
+
         transcript = await stt.transcribe_once(bytes(audio_buffer))
         audio_buffer = bytearray()
 
-        if not transcript:
-            logger.info("[Pipeline] Empty transcript — user may have been silent.")
+        if not transcript or len(transcript.strip()) < 2:
+            logger.info("[Pipeline] Empty/trivial transcript — user may have been silent.")
             return
 
         logger.info("[Pipeline] Transcript: %s", transcript)
         await websocket.send_json({"type": "transcript", "text": transcript})
 
         # --- Step 2: Run LangGraph (Claude 3.5 Sonnet) ---
+        await _send_ledger_update(domain="general", context_router="active", orchestrator="pending", tools="pending")
+
         result = await graph.ainvoke(
             {"messages": [HumanMessage(content=transcript)]},
             config=config,
         )
         logger.info("[Pipeline] Graph complete. Messages: %d", len(result["messages"]))
+
+        has_tools = bool(result.get("pending_mcp_action") or result.get("pending_proposals") or result.get("pending_commands"))
+        detected_domain = result.get("focused_context", "").split("Focus: ")[1].split(".")[0].lower() if "Focus: " in result.get("focused_context", "") else "general"
+        await _send_ledger_update(
+            domain=detected_domain,
+            context_router="completed",
+            orchestrator="completed",
+            tools="active" if has_tools else "completed",
+        )
 
         # --- Step 2.5: Check for proposal interrupt ---
         snapshot = await graph.aget_state(config)
@@ -122,12 +192,15 @@ async def voco_stream(websocket: WebSocket) -> None:
             # TTS: announce proposals
             desc_list = [p.get("description", p.get("file_path", "")) for p in proposals]
             summary_text = f"I have {len(proposals)} proposal{'s' if len(proposals) != 1 else ''} for your review. {'. '.join(desc_list)}. Say approve or reject."
-            await websocket.send_json({"type": "control", "action": "tts_start", "text": summary_text})
+            await websocket.send_json({"type": "control", "action": "tts_start", "text": summary_text, "tts_active": True})
             tts_active = True
             async for audio_chunk in tts.synthesize_stream(summary_text):
                 await websocket.send_bytes(audio_chunk)
-            await websocket.send_json({"type": "control", "action": "tts_end"})
+            await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
             tts_active = False
+            await asyncio.sleep(0.5)
+            vad.reset()
+            audio_buffer = bytearray()
 
             # Wait for proposal_decision from frontend
             decisions = []
@@ -145,7 +218,6 @@ async def voco_stream(websocket: WebSocket) -> None:
                 pid = p.get("proposal_id", "")
                 decision = decision_map.get(pid, {})
                 if decision.get("status") == "approved" and p.get("action") == "create_file":
-                    import os.path
                     file_path = p.get("file_path", "")
                     if not os.path.isabs(file_path):
                         file_path = os.path.join(project_path, file_path)
@@ -193,12 +265,15 @@ async def voco_stream(websocket: WebSocket) -> None:
             # TTS: announce commands
             cmd_descs = [c.get("description", c.get("command", "")) for c in commands]
             cmd_summary = f"I need to run {len(commands)} command{'s' if len(commands) != 1 else ''}. {'. '.join(cmd_descs)}. Approve or reject."
-            await websocket.send_json({"type": "control", "action": "tts_start", "text": cmd_summary})
+            await websocket.send_json({"type": "control", "action": "tts_start", "text": cmd_summary, "tts_active": True})
             tts_active = True
             async for audio_chunk in tts.synthesize_stream(cmd_summary):
                 await websocket.send_bytes(audio_chunk)
-            await websocket.send_json({"type": "control", "action": "tts_end"})
+            await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
             tts_active = False
+            await asyncio.sleep(0.5)
+            vad.reset()
+            audio_buffer = bytearray()
 
             # Wait for command_decision from frontend
             cmd_decisions = []
@@ -305,20 +380,47 @@ async def voco_stream(websocket: WebSocket) -> None:
 
         if not response_text.strip():
             logger.warning("[Pipeline] Empty response text — skipping TTS.")
+            await _send_ledger_clear()
             return
 
         logger.info("[Pipeline] Speaking: %.120s…", response_text)
-        await websocket.send_json({"type": "control", "action": "tts_start", "text": response_text})
+        await websocket.send_json({"type": "control", "action": "tts_start", "text": response_text, "tts_active": True})
 
         tts_active = True
-        async for audio_chunk in tts.synthesize_stream(response_text):
-            await websocket.send_bytes(audio_chunk)
+        try:
+            chunk_count = 0
+            async for audio_chunk in tts.synthesize_stream(response_text):
+                await websocket.send_bytes(audio_chunk)
+                chunk_count += 1
+            logger.info("[TTS] Sent %d audio chunks to frontend.", chunk_count)
+            if chunk_count == 0:
+                logger.warning("[TTS] Zero audio chunks — Cartesia may have rejected the request.")
+        except Exception as tts_exc:
+            logger.error("[TTS] Synthesis failed: %s", tts_exc)
 
-        await websocket.send_json({"type": "control", "action": "tts_end"})
+        await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
         tts_active = False
 
+        # Small grace period so mic doesn't pick up tail-end of TTS audio
+        await asyncio.sleep(0.5)
+        vad.reset()
+        audio_buffer = bytearray()
+
+        await _send_ledger_clear()
+
+    async def _safe_turn_end() -> None:
+        """Wraps _on_turn_end with error handling so ledger always clears."""
+        try:
+            await _on_turn_end()
+        except Exception as exc:
+            logger.error("[Pipeline] Turn-end pipeline error: %s", exc, exc_info=True)
+            try:
+                await _send_ledger_clear()
+            except Exception:
+                pass
+
     vad.on_barge_in = _on_barge_in
-    vad.on_turn_end = _on_turn_end
+    vad.on_turn_end = _safe_turn_end
 
     try:
         while True:
@@ -328,9 +430,16 @@ async def voco_stream(websocket: WebSocket) -> None:
             except asyncio.TimeoutError:
                 logger.debug("[Pipeline] WebSocket receive timeout (audio pause) — continuing")
                 continue
+            except RuntimeError:
+                # "Cannot call receive once a disconnect message has been received"
+                logger.info("Client disconnected (runtime)")
+                break
 
             if "bytes" in message:
                 chunk = message["bytes"]
+                # Skip VAD processing while TTS is active (prevents echo feedback)
+                if tts_active:
+                    continue
                 audio_buffer.extend(chunk)
                 await vad.process_chunk(chunk)
             elif "text" in message:
@@ -340,6 +449,13 @@ async def voco_stream(websocket: WebSocket) -> None:
 
                     if msg_type == "mcp_result":
                         logger.debug("[WS] Received out-of-band mcp_result: %s", payload)
+                    elif msg_type == "update_env":
+                        env_patch = payload.get("env", {})
+                        allowed_keys = {"ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "GITHUB_TOKEN", "TTS_VOICE"}
+                        for k, v in env_patch.items():
+                            if k in allowed_keys and isinstance(v, str) and v:
+                                os.environ[k] = v
+                        logger.info("[WS] Environment updated: %s", list(env_patch.keys()))
                     else:
                         logger.debug("[WS] Control message: %s", payload)
                 except json.JSONDecodeError:
