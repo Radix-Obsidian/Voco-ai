@@ -6,38 +6,42 @@ on:
       - "v*"
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CN_APPLICATION: radix-obsidian/voco
 
 jobs:
-  build:
+  draft:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release draft
+        uses: crabnebula-dev/cloud-release@v0
+        with:
+          command: release draft ${{ env.CN_APPLICATION }} --framework tauri
+          api-key: ${{ secrets.CN_API_KEY }}
+
+  build_desktop:
+    needs: draft
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: windows-latest
-            rust-targets: x86_64-pc-windows-msvc
-          - platform: macos-latest
-            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
-          - platform: ubuntu-22.04
-            rust-targets: x86_64-unknown-linux-gnu
-
-    runs-on: ${{ matrix.platform }}
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          targets: ${{ matrix.rust-targets }}
+          toolchain: stable
+          cache: true
 
       - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -47,64 +51,56 @@ jobs:
             patchelf \
             libssl-dev
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "lts/*"
 
-      - name: Install frontend dependencies
+      - name: Install dependencies
         working-directory: services/mcp-gateway
         run: npm ci
 
-      - name: Build frontend
+      - name: Build Tauri app (Windows + Linux)
+        if: matrix.os != 'macos-latest'
         working-directory: services/mcp-gateway
-        run: npm run build
-
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        run: npx tauri build
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          projectPath: services/mcp-gateway
-          tauriScript: npx tauri
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: artifacts-${{ matrix.platform }}
-          path: |
-            services/mcp-gateway/src-tauri/target/release/bundle/**/*.msi
-            services/mcp-gateway/src-tauri/target/release/bundle/**/*.msi.sig
-            services/mcp-gateway/src-tauri/target/release/bundle/**/*.exe
-            services/mcp-gateway/src-tauri/target/release/bundle/**/*.exe.sig
-            services/mcp-gateway/src-tauri/target/release/bundle/**/*.dmg
-            services/mcp-gateway/src-tauri/target/release/bundle/**/*.dmg.sig
-            services/mcp-gateway/src-tauri/target/release/bundle/**/*.app
-            services/mcp-gateway/src-tauri/target/release/bundle/**/*.app.tar.gz
-            services/mcp-gateway/src-tauri/target/release/bundle/**/*.app.tar.gz.sig
-            services/mcp-gateway/src-tauri/target/release/bundle/**/*.AppImage
-            services/mcp-gateway/src-tauri/target/release/bundle/**/*.AppImage.sig
-            services/mcp-gateway/src-tauri/target/release/bundle/**/*.deb
-          if-no-files-found: error
+      - name: Build Tauri app (macOS x86_64)
+        if: matrix.os == 'macos-latest'
+        working-directory: services/mcp-gateway
+        run: |
+          rustup target add x86_64-apple-darwin
+          npx tauri build --target x86_64-apple-darwin
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
+      - name: Build Tauri app (macOS aarch64)
+        if: matrix.os == 'macos-latest'
+        working-directory: services/mcp-gateway
+        run: |
+          rustup target add aarch64-apple-darwin
+          npx tauri build --target aarch64-apple-darwin
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Publish to CrabNebula Cloud
+      - name: Upload assets to CrabNebula
         uses: crabnebula-dev/cloud-release@v0
         with:
-          command: release
+          command: release upload ${{ env.CN_APPLICATION }} --framework tauri
+          api-key: ${{ secrets.CN_API_KEY }}
+          working-directory: services/mcp-gateway
+
+  publish:
+    needs: build_desktop
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish release
+        uses: crabnebula-dev/cloud-release@v0
+        with:
+          command: release publish ${{ env.CN_APPLICATION }} --framework tauri
           api-key: ${{ secrets.CN_API_KEY }}
