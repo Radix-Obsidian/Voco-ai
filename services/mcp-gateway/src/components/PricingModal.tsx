@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Zap, Loader2 } from "lucide-react";
+import { Check, Zap, Loader2, Lock, MonitorPlay, ShieldCheck } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -12,24 +12,25 @@ import { Button } from "@/components/ui/button";
 interface PricingModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** When true the modal is a hard paywall — cannot be dismissed */
+  forcedOpen?: boolean;
+  userEmail?: string;
 }
 
 const FREE_FEATURES = [
-  "500 voice-turns / month",
+  "50 voice-turns (hard cap)",
   "Local file search (ripgrep)",
   "Basic coding assistant",
   "Cursor & Windsurf IDE sync",
-  "Community Discord access",
 ];
 
 const PRO_FEATURES = [
-  "Unlimited voice commands",
-  "All LangGraph tools & agents",
-  "GitHub issue & PR automation",
-  "Tavily web search",
-  "Priority response speed",
-  "Human-in-the-Loop terminal execution",
-  "Founding Member badge",
+  { text: "Unlimited Local Intent Orchestration", icon: <Zap className="w-4 h-4 text-voco-cyan" /> },
+  { text: "Voco Synapse — YouTube Video Learning", icon: <MonitorPlay className="w-4 h-4 text-voco-cyan" /> },
+  { text: "Live MVP Sandbox Rendering", icon: <Check className="w-4 h-4 text-emerald-500" /> },
+  { text: "GitHub issue & PR automation", icon: <Check className="w-4 h-4 text-emerald-500" /> },
+  { text: "Zero API key leaks (cloud secured)", icon: <ShieldCheck className="w-4 h-4 text-emerald-500" /> },
+  { text: "Founding Member badge + price lock", icon: <Lock className="w-4 h-4 text-voco-purple" /> },
 ];
 
 async function openInBrowser(url: string): Promise<void> {
@@ -41,9 +42,14 @@ async function openInBrowser(url: string): Promise<void> {
   }
 }
 
-export function PricingModal({ open, onOpenChange }: PricingModalProps) {
+export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail = "" }: PricingModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const handleOpenChange = (val: boolean) => {
+    if (forcedOpen && !val) return; // hard paywall — block all dismissal
+    onOpenChange(val);
+  };
 
   const handleUpgrade = async () => {
     setLoading(true);
@@ -52,7 +58,7 @@ export function PricingModal({ open, onOpenChange }: PricingModalProps) {
       const resp = await fetch("http://localhost:8001/billing/create-checkout-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ customer_email: userEmail }),
       });
 
       if (!resp.ok) {
@@ -71,15 +77,21 @@ export function PricingModal({ open, onOpenChange }: PricingModalProps) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-zinc-950 border-zinc-800 text-zinc-100 sm:max-w-2xl">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent
+        className="bg-zinc-950 border-zinc-800 text-zinc-100 sm:max-w-2xl"
+        onPointerDownOutside={forcedOpen ? (e) => e.preventDefault() : undefined}
+        onEscapeKeyDown={forcedOpen ? (e) => e.preventDefault() : undefined}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-zinc-100 text-xl">
-            <Zap className="h-5 w-5 text-voco-cyan" />
-            Upgrade Voco
+            {forcedOpen ? <Lock className="h-5 w-5 text-voco-purple" /> : <Zap className="h-5 w-5 text-voco-cyan" />}
+            {forcedOpen ? "Sandbox Limit Reached" : "Upgrade Voco"}
           </DialogTitle>
           <DialogDescription className="text-zinc-400">
-            Unlock unlimited voice commands and every tool in the arsenal.
+            {forcedOpen
+              ? "You've used your 50 free turns. Upgrade to keep building at the speed of thought."
+              : "Unlock unlimited voice commands and every tool in the arsenal."}
           </DialogDescription>
         </DialogHeader>
 
@@ -88,7 +100,7 @@ export function PricingModal({ open, onOpenChange }: PricingModalProps) {
           <div className="flex flex-col rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
             <div className="mb-4">
               <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-1">
-                The Listener
+                The Sandbox (Trial)
               </p>
               <div className="flex items-baseline gap-1">
                 <span className="text-3xl font-bold text-zinc-100">$0</span>
@@ -110,31 +122,38 @@ export function PricingModal({ open, onOpenChange }: PricingModalProps) {
               disabled
               className="w-full border-zinc-700 bg-zinc-900 text-zinc-500 cursor-default"
             >
-              Current plan
+              {forcedOpen ? "Limit reached" : "Current plan"}
             </Button>
           </div>
 
-          {/* Pro card */}
+          {/* Founding Architect card */}
           <div className="flex flex-col rounded-xl border border-voco-purple/40 bg-voco-purple/5 p-5 relative overflow-hidden">
             {/* Glow accent */}
             <div className="absolute inset-0 rounded-xl pointer-events-none ring-1 ring-voco-purple/20" />
 
             <div className="mb-4">
-              <p className="text-xs font-semibold uppercase tracking-widest text-voco-cyan mb-1">
-                The Orchestrator
-              </p>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs font-semibold uppercase tracking-widest text-voco-cyan">
+                  Founding Architect
+                </p>
+                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/10 text-emerald-400">
+                  EARLY BIRD
+                </span>
+              </div>
               <div className="flex items-baseline gap-1">
-                <span className="text-3xl font-bold text-zinc-100">$15</span>
+                <span className="text-3xl font-bold text-zinc-100">$19</span>
                 <span className="text-sm text-zinc-400">/ month</span>
               </div>
-              <p className="text-[10px] text-voco-purple/70 mt-1">Early Bird &mdash; locked forever (reg. $39)</p>
+              <p className="text-[10px] text-zinc-500 mt-1">
+                + $0.02 per heavy turn &middot; locked 24 months (reg. $39)
+              </p>
             </div>
 
             <ul className="space-y-2.5 flex-1 mb-5">
               {PRO_FEATURES.map((f) => (
-                <li key={f} className="flex items-start gap-2 text-sm text-zinc-200">
-                  <Check className="h-4 w-4 shrink-0 mt-0.5 text-voco-cyan" />
-                  {f}
+                <li key={f.text} className="flex items-start gap-2 text-sm text-zinc-200">
+                  <span className="shrink-0 mt-0.5">{f.icon}</span>
+                  {f.text}
                 </li>
               ))}
             </ul>
@@ -152,7 +171,7 @@ export function PricingModal({ open, onOpenChange }: PricingModalProps) {
               ) : (
                 <>
                   <Zap className="h-4 w-4 mr-2" />
-                  Upgrade to Pro
+                  Secure Founding Pricing
                 </>
               )}
             </Button>
@@ -166,7 +185,7 @@ export function PricingModal({ open, onOpenChange }: PricingModalProps) {
         )}
 
         <p className="text-center text-xs text-zinc-600 pb-1">
-          Secure payment via Stripe &middot; Cancel anytime &middot; 50 Founding Member spots
+          Secure payment via Stripe &middot; 30-day money-back guarantee &middot; 500 Founding spots
         </p>
       </DialogContent>
     </Dialog>

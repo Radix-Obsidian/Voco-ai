@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Header from "@/components/Header";
 import { useVocoSocket } from "@/hooks/use-voco-socket";
 import { useAudioCapture } from "@/hooks/use-audio-capture";
@@ -42,6 +42,15 @@ const AppPage = () => {
   const { session } = useAuth();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
+
+  // Turn counter — persisted to localStorage, enforces 50-turn free cap
+  const FREE_TURN_LIMIT = 50;
+  const [turnCount, setTurnCount] = useState<number>(() => {
+    return parseInt(localStorage.getItem("voco-free-turns") ?? "0", 10);
+  });
+  const userTier: string = localStorage.getItem("voco-tier") ?? "free";
+  const atTurnLimit = userTier === "free" && turnCount >= FREE_TURN_LIMIT;
+  const prevTerminalOutput = useRef<string | null>(null);
   const [mode, setMode] = useState<"speak" | "type">("speak");
   const [textInput, setTextInput] = useState("");
   const [showOnboarding, setShowOnboarding] = useState(() => {
@@ -64,9 +73,29 @@ const AppPage = () => {
     }
   }, [needsKeys]);
 
+  // Increment turn counter when a new AI response arrives (terminalOutput transitions to non-null)
+  useEffect(() => {
+    if (terminalOutput !== null && prevTerminalOutput.current === null) {
+      setTurnCount((prev) => {
+        const next = prev + 1;
+        localStorage.setItem("voco-free-turns", String(next));
+        return next;
+      });
+    }
+    prevTerminalOutput.current = terminalOutput;
+  }, [terminalOutput]);
+
+  // Force paywall when free user hits the limit
+  useEffect(() => {
+    if (atTurnLimit) {
+      setPricingOpen(true);
+      if (isCapturing) stopCapture();
+    }
+  }, [atTurnLimit]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-start mic in speak mode when connected
   useEffect(() => {
-    if (mode === "speak" && isConnected && hasRequiredKeys && !isCapturing) {
+    if (mode === "speak" && isConnected && hasRequiredKeys && !isCapturing && !atTurnLimit) {
       startCapture();
     }
     if (mode === "type" && isCapturing) {
@@ -93,7 +122,7 @@ const AppPage = () => {
       // Escape — close modals / stop capture
       if (e.key === "Escape") {
         if (settingsOpen) setSettingsOpen(false);
-        else if (pricingOpen) setPricingOpen(false);
+        else if (pricingOpen && !atTurnLimit) setPricingOpen(false); // blocked when forced paywall
         else if (isCapturing) stopCapture();
       }
     };
@@ -166,7 +195,7 @@ const AppPage = () => {
               if (isCapturing) stopCapture();
               else startCapture();
             }}
-            disabled={!isConnected}
+            disabled={!isConnected || atTurnLimit}
             className={`
               relative flex items-center justify-center w-32 h-32 rounded-full
               bg-[#0D0D0D] border border-white/[0.06]
@@ -282,7 +311,12 @@ const AppPage = () => {
         onSave={handleSettingsSave}
       />
 
-      <PricingModal open={pricingOpen} onOpenChange={setPricingOpen} />
+      <PricingModal
+        open={pricingOpen}
+        onOpenChange={setPricingOpen}
+        forcedOpen={atTurnLimit}
+        userEmail={session?.user?.email ?? ""}
+      />
 
       {/* Content area — single-column or split-screen depending on sandbox state */}
       {isSandboxActive ? (
