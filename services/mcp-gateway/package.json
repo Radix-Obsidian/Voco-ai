@@ -4,10 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -c cyan,magenta -n tauri,engine \"npm run dev:tauri\" \"npm run dev:engine\"",
+    "dev": "concurrently -k -c cyan,magenta,yellow -n tauri,engine,litellm \"npm run dev:tauri\" \"npm run dev:engine\" \"npm run dev:litellm\"",
     "dev:frontend": "vite",
     "dev:tauri": "npx tauri dev",
     "dev:engine": "cd ../cognitive-engine && uv run uvicorn src.main:app --host 0.0.0.0 --port 8001",
+    "dev:litellm": "cd ../cognitive-engine && uv run litellm --config litellm_config.yaml --port 4000",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"

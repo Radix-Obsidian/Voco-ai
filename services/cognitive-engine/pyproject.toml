@@ -21,6 +21,7 @@ dependencies = [
     "supabase>=2.0,<3",
     "stripe>=10.0.0",
     "langchain-openai>=1.1.10",
+    "litellm[proxy]>=1.0.0",
 ]
 
 [project.optional-dependencies]
