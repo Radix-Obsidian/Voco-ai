@@ -128,28 +128,46 @@ Output: `src-tauri/target/release/bundle/`
 - GitHub automation
 - Priority response
 
-## 🌐 Distribution
+## 🌐 Distribution — CrabNebula Cloud (Primary)
 
-### Primary: AWS S3 + CloudFront
+Voco uses **CrabNebula Cloud** (official Tauri partner) for enterprise-grade
+distribution, auto-updates, release channels, and download metrics.
+
+### Release Workflow
 ```bash
-# Upload installers
-aws s3 cp src-tauri/target/release/bundle/ s3://voco-releases/v2.0.0/ --recursive
-
-# Generate signed URLs
-aws cloudfront sign \
-  --url https://d1234.cloudfront.net/v2.0.0/Voco_2.0.0_x64_en-US.msi \
-  --key-pair-id APKA... \
-  --private-key file://pk-*.pem \
-  --date-less-than 2026-12-31
-```
-
-### Secondary: GitHub Releases
-```bash
-# Create release
+# Tag a release — GitHub Actions handles the rest
 git tag v2.0.0
 git push origin v2.0.0
+```
 
-# Upload assets
+The CI pipeline (`.github/workflows/release.yml`) will:
+1. Build for Windows, macOS, and Linux in parallel
+2. Sign all artifacts with the Tauri signing key
+3. Upload everything to CrabNebula Cloud CDN
+
+### CrabNebula Dashboard
+- **Org:** `radix-obsidian`
+- **App:** `voco`
+- **CDN endpoint:** `https://cdn.crabnebula.app/update/radix-obsidian/voco/{{target}}-{{arch}}/{{current_version}}`
+- **Console:** https://crabnebula.cloud
+
+### Release Channels (via Keygen.sh license gating)
+| Tier | Channel | Update Delay |
+|------|---------|-------------|
+| Architect ($149/mo) | nightly | Immediate |
+| Orchestrator ($39/mo) | beta | 48h after nightly |
+| Listener (Free) | stable | 1 week after beta |
+
+### Required GitHub Secrets
+| Secret | Description |
+|--------|-------------|
+| `TAURI_SIGNING_PRIVATE_KEY` | Contents of `~/.tauri/voco.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password used during key generation |
+| `CN_API_KEY` | CrabNebula Cloud API key |
+
+### Fallback: GitHub Releases
+Only for emergency distribution if CrabNebula is unavailable:
+```bash
 gh release create v2.0.0 \
   src-tauri/target/release/bundle/msi/Voco_2.0.0_x64_en-US.msi \
   src-tauri/target/release/bundle/nsis/Voco_2.0.0_x64-setup.exe
@@ -242,24 +260,45 @@ gh release create v2.0.0 \
 ---
 
 
-## 🎁 Bonus: Auto-Update Setup
+## 🔐 Auto-Update Infrastructure (Required)
 
-Add to `tauri.conf.json`:
+Auto-updates are wired into the Tauri build via `tauri-plugin-updater` + CrabNebula Cloud.
+
+### Signing Key
+```bash
+cd services/mcp-gateway
+npx tauri signer generate -w ~/.tauri/voco.key
+```
+Store the private key password in your vault. The public key goes into `tauri.conf.json`.
+
+### Config (`tauri.conf.json`)
 ```json
 {
-  "updater": {
-    "active": true,
-    "endpoints": ["https://releases.voco.ai/{{target}}/{{current_version}}"],
-    "dialog": true,
-    "pubkey": "YOUR_PUBLIC_KEY"
+  "bundle": {
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://cdn.crabnebula.app/update/radix-obsidian/voco/{{target}}-{{arch}}/{{current_version}}"
+      ],
+      "pubkey": "YOUR_PUBLIC_KEY"
+    }
   }
 }
 ```
 
-Generate signing key:
-```bash
-npx tauri signer generate -w ~/.tauri/voco.key
-```
+### Rust Plugins (`lib.rs`)
+Both `tauri-plugin-updater` and `tauri-plugin-dialog` are initialized in the Tauri builder.
+
+### Frontend
+`useAppUpdater()` hook in `AppPage.tsx` checks for updates on launch (production only) and prompts the user via native dialog.
+
+### License Gating (Keygen.sh)
+- **Account:** `298d9fbb-0ff7-4040-bafc-9d4359f61ab0`
+- `validate_license` Rust command calls Keygen API to resolve tier
+- `licensing.ts` maps tier → update channel (nightly/beta/stable)
+- License key stored in Tauri secure config alongside API keys
 
 ---
 

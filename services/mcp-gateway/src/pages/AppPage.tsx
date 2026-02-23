@@ -14,6 +14,7 @@ import { SandboxPreview } from "@/components/SandboxPreview";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
 import { Mic, Send } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { useAppUpdater } from "@/hooks/use-app-updater";
 
 const AppPage = () => {
   const {
@@ -40,6 +41,7 @@ const AppPage = () => {
 
   const { settings, updateSetting, hasRequiredKeys, pushToBackend, saveSettings } = useSettings();
   const { session } = useAuth();
+  useAppUpdater();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
 

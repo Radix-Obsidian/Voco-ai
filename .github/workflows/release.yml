@@ -1,0 +1,110 @@
+name: Release Desktop App
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CN_APPLICATION: radix-obsidian/voco
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            rust-targets: x86_64-pc-windows-msvc
+          - platform: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            rust-targets: x86_64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install frontend dependencies
+        working-directory: services/mcp-gateway
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: services/mcp-gateway
+        run: npm run build
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: services/mcp-gateway
+          tauriScript: npx tauri
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.platform }}
+          path: |
+            services/mcp-gateway/src-tauri/target/release/bundle/**/*.msi
+            services/mcp-gateway/src-tauri/target/release/bundle/**/*.msi.sig
+            services/mcp-gateway/src-tauri/target/release/bundle/**/*.exe
+            services/mcp-gateway/src-tauri/target/release/bundle/**/*.exe.sig
+            services/mcp-gateway/src-tauri/target/release/bundle/**/*.dmg
+            services/mcp-gateway/src-tauri/target/release/bundle/**/*.dmg.sig
+            services/mcp-gateway/src-tauri/target/release/bundle/**/*.app
+            services/mcp-gateway/src-tauri/target/release/bundle/**/*.app.tar.gz
+            services/mcp-gateway/src-tauri/target/release/bundle/**/*.app.tar.gz.sig
+            services/mcp-gateway/src-tauri/target/release/bundle/**/*.AppImage
+            services/mcp-gateway/src-tauri/target/release/bundle/**/*.AppImage.sig
+            services/mcp-gateway/src-tauri/target/release/bundle/**/*.deb
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish to CrabNebula Cloud
+        uses: crabnebula-dev/cloud-release@v0
+        with:
+          command: release
+          api-key: ${{ secrets.CN_API_KEY }}

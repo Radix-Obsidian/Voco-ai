@@ -535,3 +535,68 @@ pub async fn search_project(
 
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
+
+// ---------------------------------------------------------------------------
+// License validation via Keygen.sh
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct LicenseResult {
+    pub valid: bool,
+    pub tier: String,
+    pub expiry: Option<String>,
+}
+
+#[tauri::command]
+pub async fn validate_license(license_key: String) -> Result<LicenseResult, String> {
+    let account_id = std::env::var("KEYGEN_ACCOUNT_ID").unwrap_or_default();
+    if account_id.is_empty() {
+        return Ok(LicenseResult {
+            valid: false,
+            tier: "listener".into(),
+            expiry: None,
+        });
+    }
+
+    let url = format!(
+        "https://api.keygen.sh/v1/accounts/{}/licenses/actions/validate-key",
+        account_id
+    );
+
+    let body = serde_json::json!({
+        "meta": { "key": license_key }
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/vnd.api+json")
+        .header("Accept", "application/vnd.api+json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("License validation request failed: {e}"))?;
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse license response: {e}"))?;
+
+    let valid = data
+        .pointer("/meta/valid")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let tier = data
+        .pointer("/data/attributes/metadata/tier")
+        .and_then(|v| v.as_str())
+        .unwrap_or("listener")
+        .to_string();
+
+    let expiry = data
+        .pointer("/data/attributes/expiry")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    Ok(LicenseResult { valid, tier, expiry })
+}
