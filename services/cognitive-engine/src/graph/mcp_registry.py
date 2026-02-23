@@ -154,19 +154,27 @@ class UniversalMCPRegistry:
             # Build a closure that calls the tool on this specific session
             def _make_invoker(tool_name: str = mcp_tool.name, sess: ClientSession = session):
                 async def _invoke(**kwargs: Any) -> str:
-                    result = await sess.call_tool(tool_name, arguments=kwargs)
-                    if result.isError:
-                        texts = [b.text for b in result.content if hasattr(b, "text")]
-                        return f"MCP tool error: {' '.join(texts)}"
-                    # Concatenate all text content blocks
-                    parts = []
-                    for block in result.content:
-                        if hasattr(block, "text"):
-                            parts.append(block.text)
-                        else:
-                            parts.append(f"[{block.type} content]")
-                    return "\n".join(parts) if parts else "(no output)"
-
+                    try:
+                        result = await sess.call_tool(tool_name, arguments=kwargs)
+                        
+                        # Handle MCP's native error flag
+                        if getattr(result, "isError", False):
+                            texts = [b.text for b in result.content if hasattr(b, "text")]
+                            return f"Tool returned an error: {' '.join(texts)}"
+                            
+                        # Concatenate all text content blocks
+                        parts = []
+                        for block in result.content:
+                            if hasattr(block, "text"):
+                                parts.append(block.text)
+                            else:
+                                parts.append(f"[{block.type} content]")
+                        return "\n".join(parts) if parts else "(no output)"
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error(f"[MCP Tool Error] {tool_name} failed: {e}")
+                        # Return string so LangGraph wraps it in a valid ToolMessage
+                        return f"Error executing tool {tool_name}: {str(e)}. Please inform the user."
                 return _invoke
 
             lc_tool = StructuredTool.from_function(
