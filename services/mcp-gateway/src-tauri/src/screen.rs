@@ -112,7 +112,8 @@ fn capture_one_frame(buffer: &Arc<Mutex<VecDeque<Vec<u8>>>>) {
 /// Python as a ``screen_frames`` message for Claude's vision pipeline.
 #[tauri::command]
 pub fn get_recent_frames() -> Vec<String> {
-    let buf = match get_buffer().lock() {
+    let binding = get_buffer();
+    let buf = match binding.lock() {
         Ok(b) => b,
         Err(_) => return vec![],
     };
