@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import Header from "@/components/Header";
-import { useVocoSocket } from "@/hooks/use-voco-socket";
+import { useVocoSocket, type TerminalOutput } from "@/hooks/use-voco-socket";
 import { useAudioCapture } from "@/hooks/use-audio-capture";
 import { useSettings } from "@/hooks/use-settings";
 import { GhostTerminal } from "@/components/GhostTerminal";
@@ -50,7 +50,7 @@ const AppPage = () => {
   });
   const userTier: string = localStorage.getItem("voco-tier") ?? "free";
   const atTurnLimit = userTier === "free" && turnCount >= FREE_TURN_LIMIT;
-  const prevTerminalOutput = useRef<string | null>(null);
+  const prevTerminalOutput = useRef<TerminalOutput | null>(null);
   const [mode, setMode] = useState<"speak" | "type">("speak");
   const [textInput, setTextInput] = useState("");
   const [showOnboarding, setShowOnboarding] = useState(() => {
