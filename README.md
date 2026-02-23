@@ -4,30 +4,83 @@
 
 Voco turns 60-second voice memos into production-ready architectural context. Your AI agent finally understands what you actually mean.
 
+## Quick Start (5 Minutes)
+
+```bash
+# 1. Clone and install
+git clone https://github.com/Radix-Obsidian/Voco-ai.git
+cd Voco-ai/services/mcp-gateway
+npm install
+
+# 2. Set up environment
+cp .env.example .env
+# Add your API keys from https://voco.ai/dashboard
+
+# 3. Start development
+npm run dev
+```
+
+## Features & Capabilities
+
+### 🎙️ Voice-to-Context Engine
+- Sub-300ms voice transcription via Deepgram
+- Barge-in support with Silero VAD
+- Instant voice feedback via Cartesia TTS
+- Context-aware LangGraph state machine
+
+### 🔒 Zero-Trust MCP Gateway
+- Tauri v2 secure sandbox
+- Human-in-the-loop terminal approval
+- Filesystem scope validation
+- Row-level security via Supabase
+
+### 💡 Enterprise Features
+- "Seat + Meter" billing ($19/mo + $0.02/turn)
+- Team workspaces & shared context
+- Audit logs & usage analytics
+- SOC 2 compliance ready
+
 ## Architecture
 
-Voco V2 is a monorepo containing two independent runtimes:
+Voco V2 is a monorepo with two independent runtimes:
 
 ```
 services/
 ├── mcp-gateway/        # Local frontend & MCP execution sandbox
-│   └── Tauri v2 (Rust) + React + Vite + Shadcn UI
+│   ├── Tauri v2 (Rust) # Zero-trust security layer
+│   ├── React 18       # Modern UI with Shadcn components
+│   └── TypeScript     # Type-safe codebase
 │
-└── cognitive-engine/   # Cloud reasoning & audio engine (coming soon)
-    └── Python 3.12+ / FastAPI / LangGraph / Silero-VAD
+└── cognitive-engine/   # Cloud reasoning & audio engine
+    ├── LangGraph      # Stateful AI orchestration
+    ├── Silero-VAD     # Voice activity detection
+    ├── FastAPI        # WebSocket bridge
+    └── Python 3.12+   # Async runtime
 ```
 
 ### MCP Gateway (`services/mcp-gateway/`)
 
-The local desktop application built with Tauri. Handles the UI layer, Supabase auth, and will serve as the secure MCP execution sandbox with human-in-the-loop approval for filesystem operations.
+The local desktop application built with Tauri. Provides:
+- Zero-trust MCP execution sandbox
+- Human-in-the-loop terminal approval
+- Filesystem scope validation
+- WebSocket bridge to cognitive engine
+- Supabase auth & RLS integration
+- Modern React UI with Shadcn/UI
 
-**Stack:** React 18 &bull; TypeScript &bull; Vite &bull; Tailwind CSS 3 &bull; Shadcn/UI &bull; Supabase Auth &bull; Framer Motion
+**Stack:** Tauri v2 • React 18 • TypeScript • Vite • Tailwind CSS 3 • Shadcn/UI • Supabase • Framer Motion
 
 ### Cognitive Engine (`services/cognitive-engine/`)
 
-The remote cloud service that handles voice transcription, multi-model AI reasoning, and Logic Ledger compilation. *Not yet scaffolded.*
+The cloud reasoning service that handles:
+- Voice transcription (Deepgram)
+- Text-to-speech (Cartesia)
+- LangGraph state machine
+- Tool execution & validation
+- Background job queue
+- Usage metering & billing
 
-**Stack:** Python 3.12+ &bull; FastAPI &bull; LangGraph &bull; Silero-VAD
+**Stack:** Python 3.12+ • FastAPI • LangGraph • Silero-VAD • Supabase • Stripe
 
 ## Getting Started
 

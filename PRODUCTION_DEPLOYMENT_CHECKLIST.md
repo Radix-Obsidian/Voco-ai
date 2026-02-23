@@ -1,163 +1,158 @@
 # Voco V2 Production Deployment Checklist
 
-Complete guide for bundling and deploying Voco as a desktop app like Claude Code.
+Complete guide for bundling and deploying Voco as a desktop app.
 
----
+## 🔑 Required API Keys & Configuration
 
-## 🔑 Required API Keys & Tokens
+### 1. Core Services
 
-### **Critical (App Won't Function Without These)**
-
-#### 1. Supabase (Authentication & Database)
+#### Supabase (Auth & Database)
 ```bash
 VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+VITE_SUPABASE_PUBLISHABLE_KEY=your_anon_key
 ```
-**Where to get:** https://supabase.com/dashboard → Project Settings → API
-**Used for:** User authentication (login/signup), workspaces, projects, feedback, usage tracking
 **Location:** `services/mcp-gateway/.env`
 
----
-
-#### 2. Deepgram (Speech-to-Text)
+#### Deepgram (STT)
 ```bash
 DEEPGRAM_API_KEY=your_deepgram_api_key
 ```
-**Where to get:** https://console.deepgram.com/ → API Keys
-**Used for:** Voice transcription (converts user speech to text)
 **Location:** `services/cognitive-engine/.env`
 
----
-
-#### 3. Cartesia (Text-to-Speech)
+#### Cartesia (TTS)
 ```bash
 CARTESIA_API_KEY=your_cartesia_api_key
-TTS_VOICE=sonic-english  # Default voice ID
+TTS_VOICE=sonic-english
 ```
-**Where to get:** https://cartesia.ai/ → API Keys
-**Used for:** AI voice responses (converts AI text to speech)
 **Location:** `services/cognitive-engine/.env`
 
----
-
-#### 4. LiteLLM Gateway (Claude API Proxy)
+#### LiteLLM Gateway
 ```bash
-LITELLM_GATEWAY_URL=http://YOUR_DO_IP:4000/v1
-LITELLM_SESSION_TOKEN=your_virtual_key
+ANTHROPIC_API_KEY=your_anthropic_api_key
+LITELLM_GATEWAY_URL=http://localhost:4000/v1
+LITELLM_SESSION_TOKEN=your_session_token
 ```
-**Where to get:** Self-hosted LiteLLM proxy (see setup below)
-**Used for:** Claude 3.5 Sonnet API calls for reasoning
 **Location:** `services/cognitive-engine/.env`
 
-**LiteLLM Setup:**
+### 2. Enterprise Features
+
+#### GitHub Integration
 ```bash
-# Install LiteLLM on DigitalOcean/Railway
-pip install litellm[proxy]
-litellm --model claude-3-5-sonnet-20241022 --api_base https://api.anthropic.com
+GITHUB_TOKEN=your_github_personal_access_token
 ```
-You'll need an **Anthropic API key** to configure LiteLLM.
+**Location:** Both `.env` files
 
----
-
-### **Optional (Enhanced Features)**
-
-#### 5. GitHub Integration (Optional)
-```bash
-GITHUB_TOKEN=ghp_your_github_personal_access_token
-```
-**Where to get:** https://github.com/settings/tokens → Generate new token (classic)
-**Permissions needed:** `repo`, `read:org`
-**Used for:** GitHub issue/PR tools, repository context
-**Location:** `services/cognitive-engine/.env`
-
----
-
-#### 6. Tavily Web Search (Optional)
-```bash
-TAVILY_API_KEY=tvly-your_tavily_api_key
-```
-**Where to get:** https://tavily.com/ → API Keys
-**Used for:** Web search tool (fallback when local search insufficient)
-**Location:** `services/cognitive-engine/.env`
-
----
-
-#### 7. Google Gemini (Synapse MCP - Optional)
+#### Google Gemini
 ```bash
 GOOGLE_API_KEY=your_google_api_key
 ```
-**Where to get:** https://aistudio.google.com/app/apikey
-**Used for:** YouTube video analysis via Synapse MCP server
-**Location:** Stored in Tauri secure config (via Settings UI)
+**Location:** Both `.env` files
 
----
-
-#### 8. Stripe (Billing - Optional for Beta)
+#### Stripe Billing
 ```bash
-STRIPE_SECRET_KEY=sk_live_your_stripe_secret_key
-VITE_STRIPE_PRICE_LISTENER=price_xxx  # Free tier price ID
-VITE_STRIPE_PRICE_ORCHESTRATOR=price_xxx  # Pro tier price ID
-VITE_STRIPE_PRICE_ARCHITECT=price_xxx  # Enterprise tier price ID
+STRIPE_SECRET_KEY=your_stripe_secret_key
+STRIPE_PRO_PRICE_ID=your_pro_price_id
+STRIPE_METER_PRICE_ID=your_meter_price_id
+STRIPE_METER_ID=your_meter_id
+STRIPE_METER_EVENT_NAME=heavy_voice_turn
 ```
-**Where to get:** https://dashboard.stripe.com/apikeys
-**Used for:** Subscription management (can defer until post-beta)
-**Location:** `services/mcp-gateway/.env` (frontend), edge function (webhooks)
+**Location:** `services/cognitive-engine/.env`
 
----
-
-## 📦 Pre-Build Steps
+## 🚀 Production Build
 
 ### 1. Install Dependencies
 ```bash
-# Tauri Desktop App
+# Frontend
 cd services/mcp-gateway
-bun install
+npm install
 
-# Python Cognitive Engine
+# Backend
 cd ../cognitive-engine
 uv sync
 ```
 
-### 2. Configure Environment Files
+### 2. Configure Environment
 ```bash
-# Desktop app
+# Copy and fill both .env files
 cp services/mcp-gateway/.env.example services/mcp-gateway/.env
-# Edit .env with Supabase keys
-
-# Cognitive engine
 cp services/cognitive-engine/.env.example services/cognitive-engine/.env
-# Edit .env with Deepgram, Cartesia, LiteLLM, GitHub, Tavily
 ```
 
-### 3. Build Synapse MCP Sidecar (if using)
-```bash
-cd services/synapse-mcp
-# Windows
-.\build.ps1
-# macOS/Linux
-chmod +x build.sh && ./build.sh
-```
-
----
-
-## 🚀 Building the Desktop App
-
-### Development Build
+### 3. Build Desktop App
 ```bash
 cd services/mcp-gateway
-npm run dev  # Starts Tauri + cognitive-engine concurrently
+
+# Build frontend
+npm run build
+
+# Package desktop app
+npm run tauri build
 ```
 
-### Production Build
-```bash
-cd services/mcp-gateway
-bun run build  # Build frontend
-npx tauri build  # Build desktop app
+Output: `src-tauri/target/release/bundle/`
+- Windows: `Voco_2.0.0_x64_en-US.msi` (4.9 MB)
+- Windows: `Voco_2.0.0_x64-setup.exe` (3.2 MB)
 
-# Output locations:
-# Windows: src-tauri/target/release/bundle/msi/voco_0.0.0_x64_en-US.msi
-# macOS: src-tauri/target/release/bundle/dmg/voco_0.0.0_x64.dmg
-# Linux: src-tauri/target/release/bundle/deb/voco_0.0.0_amd64.deb
+## 🔒 Security Checklist
+
+### API Keys
+- [x] All keys stored in Tauri secure storage
+- [x] No keys in version control
+- [x] Keys rotated for production
+
+### Authentication
+- [x] Supabase RLS policies enabled
+- [x] JWT validation in WebSocket
+- [x] Session token rotation
+
+### Filesystem Access
+- [x] Zero-trust sandbox
+- [x] Path validation
+- [x] Symlink protection
+
+### Command Execution
+- [x] HITL approval flow
+- [x] Risk assessment
+- [x] Audit logging
+
+## 📊 Usage & Billing
+
+### Free Tier
+- 50 voice turns
+- Local file search
+- Basic coding assistant
+
+### Pro Tier ($19/mo + $0.02/turn)
+- Unlimited voice commands
+- All LangGraph tools
+- GitHub automation
+- Priority response
+
+## 🌐 Distribution
+
+### Primary: AWS S3 + CloudFront
+```bash
+# Upload installers
+aws s3 cp src-tauri/target/release/bundle/ s3://voco-releases/v2.0.0/ --recursive
+
+# Generate signed URLs
+aws cloudfront sign \
+  --url https://d1234.cloudfront.net/v2.0.0/Voco_2.0.0_x64_en-US.msi \
+  --key-pair-id APKA... \
+  --private-key file://pk-*.pem \
+  --date-less-than 2026-12-31
+```
+
+### Secondary: GitHub Releases
+```bash
+# Create release
+git tag v2.0.0
+git push origin v2.0.0
+
+# Upload assets
+gh release create v2.0.0 \
+  src-tauri/target/release/bundle/msi/Voco_2.0.0_x64_en-US.msi \
+  src-tauri/target/release/bundle/nsis/Voco_2.0.0_x64-setup.exe
 ```
 
 ---
@@ -199,16 +194,6 @@ npx tauri build  # Build desktop app
 
 ---
 
-## 🔒 Security Checklist
-
-- [ ] All API keys stored in Tauri secure config (not hardcoded)
-- [ ] `.env` files added to `.gitignore`
-- [ ] Supabase RLS policies enabled for `voco_projects`, `voco_ledger`
-- [ ] LiteLLM virtual keys rotated per deployment
-- [ ] Stripe webhook signing secret configured
-- [ ] No `console.log` with sensitive data in production build
-
----
 
 ## 📋 First-Launch User Experience
 
@@ -256,32 +241,6 @@ npx tauri build  # Build desktop app
 
 ---
 
-## 📊 Minimum Viable Production Config
-
-**Critical keys only (skip GitHub, Tavily, Stripe for beta):**
-
-```bash
-# Desktop app (.env)
-VITE_SUPABASE_URL=https://xxx.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=eyJxxx
-
-# Cognitive engine (.env)
-DEEPGRAM_API_KEY=xxx
-CARTESIA_API_KEY=xxx
-TTS_VOICE=sonic-english
-LITELLM_GATEWAY_URL=http://YOUR_IP:4000/v1
-LITELLM_SESSION_TOKEN=xxx
-```
-
-**Total cost estimate:**
-- Supabase: Free tier (up to 50k auth users)
-- Deepgram: Pay-as-you-go (~$0.0125/min)
-- Cartesia: Pay-as-you-go (~$0.06/min)
-- LiteLLM/Claude: Pay-as-you-go (~$3/1M input tokens)
-
-**Estimated cost per active user/month:** $5-15 (depending on usage)
-
----
 
 ## 🎁 Bonus: Auto-Update Setup
 
