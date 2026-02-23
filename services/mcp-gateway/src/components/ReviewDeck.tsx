@@ -36,7 +36,7 @@ export function ReviewDeck({ proposals, onSubmitDecisions }: ReviewDeckProps) {
   };
 
   const statusBadge = (status: string) => {
-    if (status === "approved") return <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-xs">APPROVED</Badge>;
+    if (status === "approved") return <Badge className="bg-voco-cyan/20 text-voco-cyan border-voco-cyan/30 text-xs">APPROVED</Badge>;
     if (status === "rejected") return <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-xs">REJECTED</Badge>;
     return <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-xs">PENDING</Badge>;
   };
@@ -65,7 +65,7 @@ export function ReviewDeck({ proposals, onSubmitDecisions }: ReviewDeckProps) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => bulkSet("approved")}
-            className="px-2 py-1 text-xs font-mono rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20 transition-colors"
+            className="px-2 py-1 text-xs font-mono rounded bg-voco-cyan/10 text-voco-cyan hover:bg-voco-cyan/20 border border-voco-cyan/20 transition-colors"
           >
             Approve All
           </button>
@@ -100,8 +100,8 @@ export function ReviewDeck({ proposals, onSubmitDecisions }: ReviewDeckProps) {
                       onClick={() => setStatus(p.proposal_id, "approved")}
                       className={`px-2 py-0.5 text-xs font-mono rounded transition-colors ${
                         status === "approved"
-                          ? "bg-emerald-500/30 text-emerald-300 border border-emerald-500/40"
-                          : "bg-zinc-800 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 border border-zinc-700"
+                          ? "bg-voco-cyan/30 text-voco-cyan border border-voco-cyan/40"
+                          : "bg-zinc-800 text-zinc-400 hover:text-voco-cyan hover:bg-voco-cyan/10 border border-zinc-700"
                       }`}
                     >
                       Approve

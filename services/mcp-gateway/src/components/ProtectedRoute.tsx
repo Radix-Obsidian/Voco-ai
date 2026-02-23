@@ -1,8 +1,10 @@
-import { Navigate } from "react-router-dom";
+import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
+import AuthModal from "./AuthModal";
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { session, loading } = useAuth();
+  const [authOpen, setAuthOpen] = useState(true);
 
   if (loading) {
     return (
@@ -13,7 +15,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   }
 
   if (!session) {
-    return <Navigate to="/" replace />;
+    return <AuthModal open={authOpen} onOpenChange={setAuthOpen} defaultTab="signin" />;
   }
 
   return <>{children}</>;

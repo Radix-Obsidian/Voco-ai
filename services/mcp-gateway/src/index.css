@@ -4,35 +4,35 @@
 
 @layer base {
   :root {
-    /* Voco V2 — Strict dark mode + glowing emerald */
+    /* Voco V2 — Strict dark mode + purple-cyan gradient */
     --background: 0 0% 4%; /* #0A0A0A */
     --foreground: 0 0% 95%; /* near-white */
     --card: 0 0% 7%; /* #121212 */
     --card-foreground: 0 0% 95%;
     --popover: 0 0% 7%;
     --popover-foreground: 0 0% 95%;
-    --primary: 155 100% 50%; /* #00FFAA voco-emerald */
-    --primary-foreground: 0 0% 0%;
+    --primary: 250 100% 69%; /* #7B61FF voco-purple */
+    --primary-foreground: 0 0% 100%;
     --secondary: 0 0% 12%;
     --secondary-foreground: 0 0% 70%;
     --muted: 0 0% 12%;
     --muted-foreground: 0 0% 55%;
-    --accent: 155 100% 50%; /* emerald accent */
+    --accent: 193 100% 50%; /* #00D9FF cyan accent */
     --accent-foreground: 0 0% 0%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
     --border: 0 0% 14%;
     --input: 0 0% 14%;
-    --ring: 155 100% 50%;
+    --ring: 250 100% 69%;
     --radius: 0.5rem;
     --sidebar-background: 0 0% 5%;
     --sidebar-foreground: 0 0% 85%;
-    --sidebar-primary: 155 100% 45%;
-    --sidebar-primary-foreground: 0 0% 0%;
-    --sidebar-accent: 155 100% 50%;
+    --sidebar-primary: 250 100% 69%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 193 100% 50%;
     --sidebar-accent-foreground: 0 0% 0%;
     --sidebar-border: 0 0% 14%;
-    --sidebar-ring: 155 100% 50%;
+    --sidebar-ring: 250 100% 69%;
   }
 }
 
@@ -80,17 +80,17 @@
   animation: shimmer 3s linear infinite;
 }
 
-/* Emerald glow utilities */
-.glow-emerald {
-  box-shadow: 0 0 15px rgba(0, 255, 170, 0.4);
+/* Voco gradient glow utilities */
+.glow-voco {
+  box-shadow: 0 0 15px rgba(123, 97, 255, 0.4);
 }
 
-.glow-emerald-lg {
-  box-shadow: 0 0 30px rgba(0, 255, 170, 0.5), 0 0 60px rgba(0, 255, 170, 0.2);
+.glow-voco-lg {
+  box-shadow: 0 0 30px rgba(123, 97, 255, 0.5), 0 0 60px rgba(0, 217, 255, 0.2);
 }
 
-.glow-emerald-text {
-  text-shadow: 0 0 10px rgba(0, 255, 170, 0.5);
+.glow-voco-text {
+  text-shadow: 0 0 10px rgba(123, 97, 255, 0.5);
 }
 
 /* Article prose styles */

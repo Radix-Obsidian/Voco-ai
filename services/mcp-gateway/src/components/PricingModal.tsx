@@ -15,19 +15,21 @@ interface PricingModalProps {
 }
 
 const FREE_FEATURES = [
-  "5 voice commands / day",
-  "Local file search",
+  "500 voice-turns / month",
+  "Local file search (ripgrep)",
   "Basic coding assistant",
   "Cursor & Windsurf IDE sync",
+  "Community Discord access",
 ];
 
 const PRO_FEATURES = [
   "Unlimited voice commands",
-  "All LangGraph tools",
-  "GitHub issue & PR tools",
+  "All LangGraph tools & agents",
+  "GitHub issue & PR automation",
   "Tavily web search",
   "Priority response speed",
-  "All IDE integrations",
+  "Human-in-the-Loop terminal execution",
+  "Founding Member badge",
 ];
 
 async function openInBrowser(url: string): Promise<void> {
@@ -73,7 +75,7 @@ export function PricingModal({ open, onOpenChange }: PricingModalProps) {
       <DialogContent className="bg-zinc-950 border-zinc-800 text-zinc-100 sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-zinc-100 text-xl">
-            <Zap className="h-5 w-5 text-emerald-400" />
+            <Zap className="h-5 w-5 text-voco-cyan" />
             Upgrade Voco
           </DialogTitle>
           <DialogDescription className="text-zinc-400">
@@ -86,11 +88,11 @@ export function PricingModal({ open, onOpenChange }: PricingModalProps) {
           <div className="flex flex-col rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
             <div className="mb-4">
               <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-1">
-                Free
+                The Listener
               </p>
               <div className="flex items-baseline gap-1">
                 <span className="text-3xl font-bold text-zinc-100">$0</span>
-                <span className="text-sm text-zinc-500">/ month</span>
+                <span className="text-sm text-zinc-500">/ forever</span>
               </div>
             </div>
 
@@ -113,24 +115,25 @@ export function PricingModal({ open, onOpenChange }: PricingModalProps) {
           </div>
 
           {/* Pro card */}
-          <div className="flex flex-col rounded-xl border border-emerald-500/40 bg-emerald-950/20 p-5 relative overflow-hidden">
+          <div className="flex flex-col rounded-xl border border-voco-purple/40 bg-voco-purple/5 p-5 relative overflow-hidden">
             {/* Glow accent */}
-            <div className="absolute inset-0 rounded-xl pointer-events-none ring-1 ring-emerald-500/20" />
+            <div className="absolute inset-0 rounded-xl pointer-events-none ring-1 ring-voco-purple/20" />
 
             <div className="mb-4">
-              <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-1">
-                Pro
+              <p className="text-xs font-semibold uppercase tracking-widest text-voco-cyan mb-1">
+                The Orchestrator
               </p>
               <div className="flex items-baseline gap-1">
-                <span className="text-3xl font-bold text-zinc-100">$20</span>
+                <span className="text-3xl font-bold text-zinc-100">$15</span>
                 <span className="text-sm text-zinc-400">/ month</span>
               </div>
+              <p className="text-[10px] text-voco-purple/70 mt-1">Early Bird &mdash; locked forever (reg. $39)</p>
             </div>
 
             <ul className="space-y-2.5 flex-1 mb-5">
               {PRO_FEATURES.map((f) => (
                 <li key={f} className="flex items-start gap-2 text-sm text-zinc-200">
-                  <Check className="h-4 w-4 shrink-0 mt-0.5 text-emerald-400" />
+                  <Check className="h-4 w-4 shrink-0 mt-0.5 text-voco-cyan" />
                   {f}
                 </li>
               ))}
@@ -139,7 +142,7 @@ export function PricingModal({ open, onOpenChange }: PricingModalProps) {
             <Button
               onClick={handleUpgrade}
               disabled={loading}
-              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-emerald-glow transition-all"
+              className="w-full bg-gradient-to-r from-voco-purple to-voco-cyan hover:opacity-90 text-white font-semibold py-2.5 rounded-lg transition-colors"
             >
               {loading ? (
                 <>
@@ -163,7 +166,7 @@ export function PricingModal({ open, onOpenChange }: PricingModalProps) {
         )}
 
         <p className="text-center text-xs text-zinc-600 pb-1">
-          Secure payment via Stripe · Cancel anytime
+          Secure payment via Stripe &middot; Cancel anytime &middot; 50 Founding Member spots
         </p>
       </DialogContent>
     </Dialog>

@@ -23,8 +23,7 @@ async function _nativeSave(settings: VocoSettings): Promise<void> {
 }
 
 export interface VocoSettings {
-  // BYOK API keys (Milestone 10)
-  ANTHROPIC_API_KEY: string;
+  // Audio & voice settings
   DEEPGRAM_API_KEY: string;
   CARTESIA_API_KEY: string;
   GITHUB_TOKEN: string;
@@ -34,7 +33,6 @@ export interface VocoSettings {
 const STORAGE_KEY = "voco-settings";
 
 const DEFAULT_SETTINGS: VocoSettings = {
-  ANTHROPIC_API_KEY: "",
   DEEPGRAM_API_KEY: "",
   CARTESIA_API_KEY: "",
   GITHUB_TOKEN: "",
@@ -84,7 +82,6 @@ export function useSettings() {
   }, []);
 
   const hasRequiredKeys =
-    settings.ANTHROPIC_API_KEY.length > 0 &&
     settings.DEEPGRAM_API_KEY.length > 0 &&
     settings.CARTESIA_API_KEY.length > 0;
 
@@ -100,7 +97,6 @@ export function useSettings() {
         JSON.stringify({
           type: "update_env",
           env: {
-            ANTHROPIC_API_KEY: settings.ANTHROPIC_API_KEY,
             DEEPGRAM_API_KEY: settings.DEEPGRAM_API_KEY,
             CARTESIA_API_KEY: settings.CARTESIA_API_KEY,
             GITHUB_TOKEN: settings.GITHUB_TOKEN,

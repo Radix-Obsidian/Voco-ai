@@ -22,7 +22,7 @@ export function GhostTerminal({ output, onClose }: GhostTerminalProps) {
   const scopeColors = {
     local: "bg-blue-500/20 text-blue-400 border-blue-500/30",
     web: "bg-purple-500/20 text-purple-400 border-purple-500/30",
-    hybrid: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+    hybrid: "bg-voco-cyan/20 text-voco-cyan border-voco-cyan/30",
   };
 
   return (
@@ -68,7 +68,7 @@ export function GhostTerminal({ output, onClose }: GhostTerminalProps) {
 
       <div className="px-4 py-2 font-mono text-sm">
         <div className="flex items-center gap-2 text-zinc-300">
-          <span className="text-emerald-400">$</span>
+          <span className="text-voco-cyan">$</span>
           <span className="text-zinc-400">{output.command}</span>
         </div>
       </div>

@@ -80,6 +80,7 @@ export function useVocoSocket() {
   const [backgroundJobs, setBackgroundJobs] = useState<BackgroundJob[]>([]);
   const [sandboxUrl, setSandboxUrl] = useState<string | null>(null);
   const [sandboxRefreshKey, setSandboxRefreshKey] = useState(0);
+  const [liveTranscript, setLiveTranscript] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRequests = useRef<Map<string, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>>(new Map());
 
@@ -293,6 +294,14 @@ export function useVocoSocket() {
     setProposals([]);
   }, []);
 
+  const sendAuthSync = useCallback((token: string, uid: string) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "auth_sync", token, uid }));
+      console.log("[VocoSocket] auth_sync sent for uid:", uid);
+    }
+  }, []);
+
   const submitCommandDecisions = useCallback((decisions: Array<{ command_id: string; status: "approved" | "rejected" }>) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -328,13 +337,16 @@ export function useVocoSocket() {
       try {
         const msg = JSON.parse(event.data);
 
-        if (msg.type === "control") {
+        if (msg.type === "transcript") {
+          setLiveTranscript(msg.text ?? "");
+        } else if (msg.type === "control") {
           if (msg.action === "halt_audio_playback") {
             haltNativeAudio();
             setBargeInActive(true);
             console.log("[Barge-in] Halting native audio!");
           } else if (msg.action === "turn_ended") {
             setBargeInActive(false);
+            setLiveTranscript("");
           } else if (msg.action === "tts_start") {
             ttsActiveRef.current = true;
             console.log("[TTS] Active — mic suppressed to prevent echo");
@@ -504,8 +516,10 @@ export function useVocoSocket() {
     ledgerState,
     backgroundJobs,
     wsRef,
+    sendAuthSync,
     sandboxUrl,
     sandboxRefreshKey,
     setSandboxUrl,
+    liveTranscript,
   };
 }

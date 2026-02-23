@@ -25,7 +25,7 @@ export function SandboxPreview({ url, refreshKey, onClose }: SandboxPreviewProps
       {/* Toolbar */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.05] shrink-0">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-voco-emerald animate-pulse" />
+          <div className="w-2 h-2 rounded-full bg-voco-purple animate-pulse" />
           <span className="text-xs text-zinc-400 font-mono tracking-wide">live sandbox</span>
         </div>
         <div className="flex items-center gap-0.5">
@@ -57,7 +57,7 @@ export function SandboxPreview({ url, refreshKey, onClose }: SandboxPreviewProps
       <div className="relative flex-1 overflow-hidden">
         {isLoading && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#080808]">
-            <RefreshCw className="w-5 h-5 text-voco-emerald animate-spin" />
+            <RefreshCw className="w-5 h-5 text-voco-purple animate-spin" />
             <span className="text-xs text-zinc-500">Rendering sandbox…</span>
           </div>
         )}

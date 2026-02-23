@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -11,13 +10,13 @@ import { useToast } from "@/hooks/use-toast";
 interface AuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  defaultTab?: "signin" | "signup";
 }
 
-const AuthModal = ({ open, onOpenChange }: AuthModalProps) => {
+const AuthModal = ({ open, onOpenChange, defaultTab = "signin" }: AuthModalProps) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
   const { toast } = useToast();
 
   const handleSignUp = async (e: React.FormEvent) => {
@@ -45,7 +44,7 @@ const AuthModal = ({ open, onOpenChange }: AuthModalProps) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } else {
       onOpenChange(false);
-      navigate("/app");
+      // Auth state change will automatically trigger ProtectedRoute to render AppPage
     }
   };
 
@@ -65,8 +64,14 @@ const AuthModal = ({ open, onOpenChange }: AuthModalProps) => {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="bg-black/80 backdrop-blur-2xl border border-white/10 sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-foreground text-xl">Welcome to Voco</DialogTitle>
-          <DialogDescription className="text-muted-foreground">Sign in to start compiling context.</DialogDescription>
+          <DialogTitle className="text-foreground text-xl">
+            {defaultTab === "signup" ? "Join the Voco Beta" : "Welcome Back"}
+          </DialogTitle>
+          <DialogDescription className="text-muted-foreground">
+            {defaultTab === "signup"
+              ? "50 spots. Sub-300ms voice-to-code on your localhost."
+              : "Sign in to your Voco account."}
+          </DialogDescription>
         </DialogHeader>
 
         <Button
@@ -83,7 +88,7 @@ const AuthModal = ({ open, onOpenChange }: AuthModalProps) => {
           <div className="relative flex justify-center text-xs"><span className="bg-black/80 px-2 text-muted-foreground">or</span></div>
         </div>
 
-        <Tabs defaultValue="signin" className="w-full">
+        <Tabs defaultValue={defaultTab} className="w-full">
           <TabsList className="w-full bg-white/5 border border-white/10">
             <TabsTrigger value="signin" className="flex-1 data-[state=active]:bg-white/10">Sign In</TabsTrigger>
             <TabsTrigger value="signup" className="flex-1 data-[state=active]:bg-white/10">Sign Up</TabsTrigger>
@@ -101,7 +106,8 @@ const AuthModal = ({ open, onOpenChange }: AuthModalProps) => {
             <form onSubmit={handleSignUp} className="space-y-3 mt-3">
               <div><Label className="text-muted-foreground text-xs">Email</Label><Input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="bg-white/5 border-white/10 text-foreground" /></div>
               <div><Label className="text-muted-foreground text-xs">Password</Label><Input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={6} className="bg-white/5 border-white/10 text-foreground" /></div>
-              <Button type="submit" disabled={loading} className="w-full bg-[#0FF984] hover:bg-[#0de070] text-black">{loading ? "Creating account..." : "Create Account"}</Button>
+              <Button type="submit" disabled={loading} className="w-full bg-[#0FF984] hover:bg-[#0de070] text-black">{loading ? "Creating account..." : "Claim Your Beta Spot"}</Button>
+              <p className="text-center text-xs text-muted-foreground mt-2">Free tier forever. No credit card required.</p>
             </form>
           </TabsContent>
         </Tabs>

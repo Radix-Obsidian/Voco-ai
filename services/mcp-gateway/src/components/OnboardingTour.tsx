@@ -7,28 +7,28 @@ interface OnboardingTourProps {
 
 const steps = [
   {
-    title: "Welcome to Voco",
-    subtitle: "Your Voice-Native Coding Orchestrator",
+    title: "Welcome to the Beta",
+    subtitle: "You're one of the Founding 50",
     icon: Zap,
-    body: "Voco turns your voice into executed code. Speak naturally, and Voco will search your codebase, write files, run commands, and explain results — all in sub-300ms.",
+    body: "Voco is a sub-300ms voice-to-code orchestrator. Speak naturally, and Voco will search your codebase, write files, run terminal commands, and explain results — all locally on your machine.",
   },
   {
     title: "Voice First, Always",
-    subtitle: "Speak or Type — Your Choice",
+    subtitle: "Speak or Type — ⌘K to switch",
     icon: Mic,
-    body: "Tap the emerald orb to start speaking. Voco uses neural voice activity detection to know when you're done. Need precision? Switch to text mode anytime.",
+    body: "Tap the orb to start speaking. Voco uses neural voice activity detection (Silero VAD) to know when you're done. Need precision? Hit ⌘K to switch to text mode anytime.",
   },
   {
-    title: "Your Logic Ledger",
+    title: "Your Intent Ledger",
     subtitle: "See What Voco is Thinking",
     icon: Brain,
-    body: "The Visual Ledger shows every step of Voco's reasoning pipeline in real-time: domain detection, AI orchestration, and tool execution. Full transparency, zero black boxes.",
+    body: "The Visual Ledger shows every step of Voco's LangGraph reasoning pipeline in real-time: domain detection, AI orchestration, and tool execution. Full transparency, zero black boxes.",
   },
   {
     title: "Human-in-the-Loop",
     subtitle: "You Approve Every Action",
     icon: Shield,
-    body: "Voco never runs destructive commands without your consent. File writes, git operations, and terminal commands all require explicit approval before execution.",
+    body: "Voco's AI engine has zero direct filesystem access. File writes, git operations, and terminal commands all require your explicit approval. High-risk commands are spoken aloud before execution.",
   },
 ];
 
@@ -56,9 +56,9 @@ export function OnboardingTour({ onComplete }: OnboardingTourProps) {
               key={i}
               className={`h-1 rounded-full transition-all duration-300 ${
                 i === step
-                  ? "w-6 bg-voco-emerald"
+                  ? "w-6 bg-gradient-to-r from-voco-purple to-voco-cyan"
                   : i < step
-                    ? "w-3 bg-voco-emerald/40"
+                    ? "w-3 bg-voco-purple/40"
                     : "w-3 bg-zinc-700 border border-dashed border-zinc-600"
               }`}
             />
@@ -66,13 +66,13 @@ export function OnboardingTour({ onComplete }: OnboardingTourProps) {
         </div>
 
         {/* Icon */}
-        <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-voco-emerald/10 border border-voco-emerald/20 mb-6">
-          <Icon className="w-6 h-6 text-voco-emerald" />
+        <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-voco-purple/10 border border-voco-cyan/20 mb-6">
+          <Icon className="w-6 h-6 text-voco-cyan" />
         </div>
 
         {/* Content */}
         <h2 className="text-xl font-semibold text-white mb-1">{current.title}</h2>
-        <p className="text-sm text-voco-emerald/70 mb-4">{current.subtitle}</p>
+        <p className="text-sm text-voco-cyan/70 mb-4">{current.subtitle}</p>
         <p className="text-sm text-zinc-400 leading-relaxed mb-8">{current.body}</p>
 
         {/* Actions */}
@@ -89,7 +89,7 @@ export function OnboardingTour({ onComplete }: OnboardingTourProps) {
               if (isLast) onComplete();
               else setStep(step + 1);
             }}
-            className="px-5 py-2.5 rounded-lg bg-voco-emerald text-black text-sm font-medium hover:bg-voco-emerald/90 transition-colors shadow-emerald-glow-sm"
+            className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-voco-purple to-voco-cyan text-white text-sm font-medium hover:opacity-90 transition-opacity shadow-voco-glow-sm"
           >
             {isLast ? "Get Started" : "Next"}
           </button>

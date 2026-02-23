@@ -9,15 +9,13 @@ use tauri_plugin_shell::ShellExt;
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// BYOK — native API key storage
+// Audio & voice key storage (AI keys are proxied via LiteLLM gateway)
 // ---------------------------------------------------------------------------
 
-/// All API keys stored in `{app_config_dir}/config.json`.
+/// Audio/voice API keys stored in `{app_config_dir}/config.json`.
 /// Field names match Python env-var names so Python can `os.environ.update()` directly.
 #[derive(Serialize, Deserialize, Default)]
 pub struct VocoApiKeys {
-    #[serde(rename = "ANTHROPIC_API_KEY", default)]
-    pub anthropic_api_key: String,
     #[serde(rename = "DEEPGRAM_API_KEY", default)]
     pub deepgram_api_key: String,
     #[serde(rename = "CARTESIA_API_KEY", default)]
@@ -26,6 +24,8 @@ pub struct VocoApiKeys {
     pub github_token: String,
     #[serde(rename = "TTS_VOICE", default)]
     pub tts_voice: String,
+    #[serde(rename = "GOOGLE_API_KEY", default)]
+    pub google_api_key: String,
 }
 
 /// Persist API keys to `{app_config_dir}/config.json`.

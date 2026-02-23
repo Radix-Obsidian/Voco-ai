@@ -90,7 +90,7 @@ export function getStripe(secretKey?: string): Stripe | null {
   const key = secretKey ?? (typeof process !== "undefined" ? process.env.STRIPE_SECRET_KEY : undefined);
   if (!key) return null;
   if (!_stripe) {
-    _stripe = new Stripe(key, { apiVersion: "2025-12-18.acacia" });
+    _stripe = new Stripe(key, { apiVersion: "2026-01-28.clover" });
   }
   return _stripe;
 }

@@ -80,7 +80,8 @@ Copy `.env.example` files in each service directory. Keys consumed at runtime vi
 
 | Key | Service | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | cognitive-engine | Claude claude-sonnet-4-5-20250929 |
+| `LITELLM_GATEWAY_URL` | cognitive-engine | LiteLLM proxy URL (e.g. `http://YOUR_DO_IP:4000/v1`) |
+| `LITELLM_SESSION_TOKEN` | cognitive-engine | Fallback LiteLLM virtual key (overridden by auth_sync) |
 | `DEEPGRAM_API_KEY` | cognitive-engine | STT transcription |
 | `CARTESIA_API_KEY` | cognitive-engine | TTS synthesis |
 | `GITHUB_TOKEN` | cognitive-engine | GitHub issue/PR tools |
@@ -147,6 +148,11 @@ When Claude calls a tool, the graph immediately returns an ACK `ToolMessage` (sa
 
 ## Tauri Gateway (`services/mcp-gateway/`)
 
+### Desktop App Architecture
+The Tauri app is **auth-required** on launch. Users log in via Supabase (email/password or Google OAuth) like Claude Desktop or Whisper Flow. There is **no marketing landing page** in the desktop app — user acquisition happens via the external marketing site (hosted on Lovable) with a "Download Voco" CTA.
+
+On first launch, users see `AuthModal` → after auth, the protected `AppPage` loads with full desktop functionality (billing, settings, feedback, voice orchestration).
+
 ### Rust Commands (`src-tauri/src/commands.rs`)
 | Command | Purpose |
 |---|---|
@@ -159,12 +165,17 @@ All commands enforce canonical path checks — no path traversal possible.
 ### TypeScript Frontend
 | File | Role |
 |---|---|
+| `src/App.tsx` | Root component — renders `<ProtectedRoute><AppPage /></ProtectedRoute>` directly (no router) |
+| `src/components/AuthModal.tsx` | Sign-in/Sign-up modal (Supabase auth) |
+| `src/components/ProtectedRoute.tsx` | Guards AppPage — redirects to auth if no session |
 | `src/hooks/use-voco-socket.ts` | WebSocket connection, VAD mic streaming, message routing, Tauri `invoke()` dispatch |
 | `src/pages/AppPage.tsx` | Main app shell |
 | `src/components/VisualLedger.tsx` | Real-time LangGraph node status display |
 | `src/components/ReviewDeck.tsx` | File proposal HITL UI |
 | `src/components/CommandApproval.tsx` | Terminal command HITL UI |
 | `src/components/GhostTerminal.tsx` | Terminal output display |
+| `src/components/PricingModal.tsx` | Subscription management (Stripe) |
+| `src/components/FeedbackWidget.tsx` | Beta feedback submission (Supabase) |
 
 The `use-voco-socket.ts` hook routes incoming JSON messages by `type`:
 - `mcp_request` (method `local/*`) → `tauriInvoke()` → result sent back as `mcp_result`

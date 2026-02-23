@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 
-from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 from .state import VocoState
@@ -133,38 +133,73 @@ _sonnet_model = None
 _sonnet_tool_count = 0
 _haiku_model = None
 
+# Per-session LiteLLM virtual key (set by main.py on auth_sync)
+_session_token: str = ""
+
+
+def set_session_token(token: str) -> None:
+    """Update the LiteLLM session token and invalidate cached models.
+
+    Called by ``main.py`` when an ``auth_sync`` message provides a new
+    ``voco_session_token``.  Invalidating the cached models forces them
+    to be re-created with the new api_key on the next invocation.
+    """
+    global _session_token, _sonnet_model, _haiku_model
+    _session_token = token
+    _sonnet_model = None
+    _haiku_model = None
+    logger.info("[Model] Session token updated — cached models invalidated.")
+
+
+def _get_gateway_url() -> str:
+    """Return the LiteLLM gateway base URL from env."""
+    url = os.environ.get("LITELLM_GATEWAY_URL", "")
+    if not url:
+        raise RuntimeError(
+            "LITELLM_GATEWAY_URL is not set. "
+            "Configure it to point to your LiteLLM proxy (e.g. http://YOUR_DO_IP:4000/v1)."
+        )
+    return url
+
+
+def _get_api_key() -> str:
+    """Return the session token or fall back to LITELLM_SESSION_TOKEN env var."""
+    key = _session_token or os.environ.get("LITELLM_SESSION_TOKEN", "")
+    if not key:
+        raise RuntimeError(
+            "No LiteLLM session token available. "
+            "Please log in so Voco can authenticate with the AI gateway."
+        )
+    return key
+
 
 def _get_sonnet():
-    """Lazily return claude-sonnet-4-5 bound to all tools."""
+    """Lazily return claude-sonnet-4-5 bound to all tools via LiteLLM proxy."""
     global _sonnet_model, _sonnet_tool_count
     all_tools = get_all_tools()
     if _sonnet_model is None or len(all_tools) != _sonnet_tool_count:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY is not set.")
-        _sonnet_model = ChatAnthropic(
+        _sonnet_model = ChatOpenAI(
+            base_url=_get_gateway_url(),
+            api_key=_get_api_key(),
             model="claude-sonnet-4-5-20250929",
             temperature=0,
-            api_key=api_key,
         ).bind_tools(all_tools)
         _sonnet_tool_count = len(all_tools)
-        logger.info("[Model] Sonnet bound with %d tools.", _sonnet_tool_count)
+        logger.info("[Model] Sonnet bound with %d tools (via LiteLLM proxy).", _sonnet_tool_count)
     return _sonnet_model
 
 
 def _get_haiku():
-    """Lazily return claude-haiku-4-5 (no tools — fast conversational responses)."""
+    """Lazily return claude-haiku-4-5 (no tools — fast conversational responses) via LiteLLM proxy."""
     global _haiku_model
     if _haiku_model is None:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY is not set.")
-        _haiku_model = ChatAnthropic(
+        _haiku_model = ChatOpenAI(
+            base_url=_get_gateway_url(),
+            api_key=_get_api_key(),
             model="claude-haiku-4-5-20251001",
             temperature=0,
-            api_key=api_key,
         )
-        logger.info("[Model] Haiku ready (conversational fast-path).")
+        logger.info("[Model] Haiku ready (conversational fast-path, via LiteLLM proxy).")
     return _haiku_model
 
 

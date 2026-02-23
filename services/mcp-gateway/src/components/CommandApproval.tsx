@@ -60,7 +60,7 @@ export function CommandApproval({ commands, onSubmitDecisions }: CommandApproval
         <div className="flex items-center gap-2">
           <button
             onClick={handleApproveAll}
-            className="px-2 py-1 text-xs font-mono rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20 transition-colors"
+            className="px-2 py-1 text-xs font-mono rounded bg-voco-cyan/10 text-voco-cyan hover:bg-voco-cyan/20 border border-voco-cyan/20 transition-colors"
           >
             Ship All
           </button>
@@ -82,7 +82,7 @@ export function CommandApproval({ commands, onSubmitDecisions }: CommandApproval
               key={c.command_id}
               className={`bg-zinc-900/70 border rounded-md overflow-hidden transition-colors ${
                 status === "approved"
-                  ? "border-emerald-500/40"
+                  ? "border-voco-cyan/40"
                   : status === "rejected"
                   ? "border-red-500/40"
                   : "border-amber-500/30"
@@ -92,7 +92,7 @@ export function CommandApproval({ commands, onSubmitDecisions }: CommandApproval
               <div className="px-4 py-3">
                 <div className="flex items-center gap-2 mb-2">
                   {status === "approved" && (
-                    <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-xs">APPROVED</Badge>
+                    <Badge className="bg-voco-cyan/20 text-voco-cyan border-voco-cyan/30 text-xs">APPROVED</Badge>
                   )}
                   {status === "rejected" && (
                     <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-xs">REJECTED</Badge>
@@ -105,7 +105,7 @@ export function CommandApproval({ commands, onSubmitDecisions }: CommandApproval
 
                 {/* The actual command */}
                 <div className="bg-zinc-950 border border-zinc-800 rounded px-3 py-2 font-mono text-sm">
-                  <span className="text-emerald-400 mr-2">$</span>
+                  <span className="text-voco-cyan mr-2">$</span>
                   <span className="text-zinc-200">{c.command}</span>
                 </div>
               </div>
@@ -116,8 +116,8 @@ export function CommandApproval({ commands, onSubmitDecisions }: CommandApproval
                   onClick={() => setStatus(c.command_id, "approved")}
                   className={`flex-1 px-3 py-1.5 text-xs font-mono rounded transition-colors ${
                     status === "approved"
-                      ? "bg-emerald-500/30 text-emerald-300 border border-emerald-500/40"
-                      : "bg-zinc-800 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 border border-zinc-700"
+                      ? "bg-voco-cyan/30 text-voco-cyan border border-voco-cyan/40"
+                      : "bg-zinc-800 text-zinc-400 hover:text-voco-cyan hover:bg-voco-cyan/10 border border-zinc-700"
                   }`}
                 >
                   Ship It
@@ -148,7 +148,7 @@ export function CommandApproval({ commands, onSubmitDecisions }: CommandApproval
           disabled={!allDecided}
           className={`px-3 py-1 text-xs font-mono rounded transition-colors ${
             allDecided
-              ? "bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/30"
+              ? "bg-voco-cyan/20 text-voco-cyan hover:bg-voco-cyan/30 border border-voco-cyan/30"
               : "bg-zinc-800 text-zinc-600 border border-zinc-700 cursor-not-allowed"
           }`}
         >

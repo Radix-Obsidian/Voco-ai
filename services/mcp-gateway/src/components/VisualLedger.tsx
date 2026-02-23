@@ -66,7 +66,7 @@ function StatusIndicator({ status }: { status: LedgerNode["status"] }) {
     case "active":
       return <Loader2 className="w-5 h-5 text-primary animate-spin flex-shrink-0" />;
     case "completed":
-      return <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />;
+      return <CheckCircle2 className="w-5 h-5 text-voco-cyan flex-shrink-0" />;
     case "failed":
       return <XCircle className="w-5 h-5 text-destructive animate-pulse flex-shrink-0" />;
     default: // pending
@@ -93,7 +93,7 @@ const DagNode = ({ node }: { node: LedgerNode }) => {
         isActive
           ? "border-primary/50 bg-primary/5 shadow-[0_0_20px_rgba(0,255,170,0.15)]"
           : isCompleted
-          ? "bg-zinc-900 border-emerald-500/30 text-emerald-400"
+          ? "bg-zinc-900 border-voco-cyan/30 text-voco-cyan"
           : isFailed
           ? "border-destructive/50 bg-destructive/5 text-destructive"
           : "bg-zinc-950 border-zinc-800 text-zinc-500",
@@ -101,7 +101,7 @@ const DagNode = ({ node }: { node: LedgerNode }) => {
     >
       <Icon
         className={`w-8 h-8 mb-2 ${
-          isActive ? "text-primary" : isCompleted ? "text-emerald-400" : isFailed ? "text-destructive" : "text-zinc-600"
+          isActive ? "text-primary" : isCompleted ? "text-voco-cyan" : isFailed ? "text-destructive" : "text-zinc-600"
         }`}
       />
       <h3 className="text-sm font-bold tracking-wide text-center">{node.title}</h3>
@@ -133,11 +133,11 @@ const BackgroundJobCard = ({ job }: { job: BackgroundJob }) => {
         "relative flex items-center gap-3 px-4 py-3 rounded-xl border transition-all duration-500 overflow-hidden",
         isRunning
           ? "border-primary/40 bg-primary/5 shadow-[0_0_12px_rgba(0,255,170,0.1)]"
-          : "border-emerald-500/30 bg-zinc-900",
+          : "border-voco-cyan/30 bg-zinc-900",
       ].join(" ")}
     >
-      <div className={`p-1.5 rounded-lg ${isRunning ? "bg-primary/10" : "bg-emerald-500/10"}`}>
-        <Icon className={`w-4 h-4 ${isRunning ? "text-primary" : "text-emerald-400"}`} />
+      <div className={`p-1.5 rounded-lg ${isRunning ? "bg-primary/10" : "bg-voco-cyan/10"}`}>
+        <Icon className={`w-4 h-4 ${isRunning ? "text-primary" : "text-voco-cyan"}`} />
       </div>
 
       <div className="flex-1 min-w-0">
@@ -150,7 +150,7 @@ const BackgroundJobCard = ({ job }: { job: BackgroundJob }) => {
       {isRunning ? (
         <Loader2 className="w-4 h-4 text-primary animate-spin flex-shrink-0" />
       ) : (
-        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+        <CheckCircle2 className="w-4 h-4 text-voco-cyan flex-shrink-0" />
       )}
 
       {/* Sliding progress bar */}
@@ -183,12 +183,12 @@ export function VisualLedger({ state, backgroundJobs }: VisualLedgerProps) {
       {state && (
         <>
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg font-mono text-emerald-500 flex items-center gap-2">
+            <h2 className="text-lg font-mono text-voco-cyan flex items-center gap-2">
               <ShieldCheck className="w-5 h-5" />
               Intent Ledger:{" "}
               <span className="text-zinc-300">{state.domain}</span>
             </h2>
-            <span className="text-xs uppercase tracking-widest text-emerald-500 bg-emerald-500/10 px-3 py-1 rounded-full">
+            <span className="text-xs uppercase tracking-widest text-voco-cyan bg-voco-cyan/10 px-3 py-1 rounded-full">
               Pipeline Active
             </span>
           </div>
@@ -201,7 +201,7 @@ export function VisualLedger({ state, backgroundJobs }: VisualLedgerProps) {
                 {index < state.nodes.length - 1 && (
                   <ArrowRight
                     className={`w-6 h-6 flex-shrink-0 ${
-                      node.status === "completed" ? "text-emerald-500/50" : "text-zinc-800"
+                      node.status === "completed" ? "text-voco-cyan/50" : "text-zinc-800"
                     }`}
                   />
                 )}

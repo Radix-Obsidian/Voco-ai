@@ -1,0 +1,26 @@
+[project]
+name = "voco-synapse-mcp"
+version = "0.1.0"
+description = "Voco Synapse MCP Server — YouTube video analysis via Gemini 1.5 Pro multimodal vision"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.25,<2",
+    "yt-dlp>=2024.0.0",
+    "google-generativeai>=0.8.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pyinstaller>=6.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

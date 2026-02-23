@@ -36,13 +36,14 @@ from src.audio.tts import CartesiaTTS
 from src.audio.vad import VocoVADStreamer, load_silero_model
 from src.graph.router import graph
 from src.graph.tools import mcp_registry
+from src.graph.nodes import set_session_token
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Tauri app identifier from tauri.conf.json — used to locate config.json.
 _TAURI_APP_ID = "com.voco.mcp-gateway"
-_ALLOWED_ENV_KEYS = {"ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "GITHUB_TOKEN", "TTS_VOICE", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"}
+_ALLOWED_ENV_KEYS = {"DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "GITHUB_TOKEN", "TTS_VOICE", "SUPABASE_URL", "GOOGLE_API_KEY"}
 
 
 # In-memory store for the current Live Sandbox HTML (single-user desktop app).
@@ -165,6 +166,10 @@ async def voco_stream(websocket: WebSocket) -> None:
     config = {"configurable": {"thread_id": thread_id}}
     logger.info("[Session] New thread: %s", thread_id)
     tts_active = False  # Track if TTS is currently playing
+
+    # Per-session auth state (populated by auth_sync from frontend)
+    _auth_uid: str = "local"
+    _auth_token: str = ""
 
     # Milestone 11: Instant ACK + Background Queue
     # Each pending Tauri RPC call gets an asyncio.Future keyed on the call_id.
@@ -776,7 +781,7 @@ async def voco_stream(websocket: WebSocket) -> None:
         _icon = domain_icon.get(detected_domain, "FileCode2")
         await sync_ledger_to_supabase(
             session_id=thread_id,
-            user_id="local",
+            user_id=_auth_uid,
             project_id=result.get("active_project_path") or os.environ.get("VOCO_PROJECT_PATH", "unknown"),
             domain=detected_domain,
             nodes=[
@@ -859,9 +864,24 @@ async def voco_stream(websocket: WebSocket) -> None:
                                 "[WS] Received mcp_result with no pending future (call_id=%s).",
                                 msg_id,
                             )
+                    elif msg_type == "auth_sync":
+                        _auth_token = payload.get("token", "")
+                        _auth_uid = payload.get("uid", "local")
+                        # Extract voco_session_token from Supabase user metadata
+                        # (LiteLLM virtual key stored in user_metadata by admin)
+                        voco_token = payload.get("voco_session_token", "")
+                        if not voco_token:
+                            # Fallback: check if the frontend included it
+                            voco_token = os.environ.get("LITELLM_SESSION_TOKEN", "")
+                        if voco_token:
+                            set_session_token(voco_token)
+                        # Re-initialize Supabase client with user JWT for RLS
+                        from src.db import set_auth_jwt
+                        set_auth_jwt(_auth_token, _auth_uid)
+                        logger.info("[WS] auth_sync: uid=%s token_len=%d", _auth_uid, len(_auth_token))
                     elif msg_type == "update_env":
                         env_patch = payload.get("env", {})
-                        allowed_keys = {"ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "GITHUB_TOKEN", "TTS_VOICE", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"}
+                        allowed_keys = {"DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "GITHUB_TOKEN", "TTS_VOICE", "SUPABASE_URL"}
                         for k, v in env_patch.items():
                             if k in allowed_keys and isinstance(v, str) and v:
                                 os.environ[k] = v

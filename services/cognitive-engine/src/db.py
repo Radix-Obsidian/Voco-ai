@@ -4,8 +4,9 @@ Writes every conversational turn and background job result into two Postgres tab
   - ledger_sessions  : one row per WebSocket session (thread_id)
   - ledger_nodes     : one row per Visual Ledger node per session
 
-The client is initialised lazily so the app starts cleanly even when
-SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are absent.
+The client is initialised per-session using the authenticated user's JWT so that
+all writes go through Row Level Security (RLS).  When no JWT is available the
+ledger sync is silently disabled — the voice pipeline is never affected.
 
 All I/O is wrapped in ``asyncio.to_thread`` because the supabase-py SDK is
 synchronous.  Every error is caught and logged — a database write failure must
@@ -25,38 +26,57 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _client: "Client | None" = None
-_init_attempted = False
+_auth_uid: str = "local"
 
 
-def _get_client() -> "Client | None":
-    """Return the shared Supabase client, creating it on first call.
+def set_auth_jwt(access_token: str, uid: str) -> None:
+    """Re-initialise the Supabase client with the user's JWT for RLS.
 
-    Returns None (and logs a debug message) when credentials are missing,
-    so callers can safely no-op without extra checks.
+    Called by ``main.py`` when an ``auth_sync`` message arrives from the
+    frontend.  The client is created with the **anon key** and then the
+    session is overridden with the user's access token so that Postgres
+    RLS policies see ``auth.uid()`` correctly.
     """
-    global _client, _init_attempted
-    if _init_attempted:
-        return _client
+    global _client, _auth_uid
+    _auth_uid = uid or "local"
 
-    _init_attempted = True
     url = os.environ.get("SUPABASE_URL", "")
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    anon_key = os.environ.get("VITE_SUPABASE_PUBLISHABLE_KEY", "") or os.environ.get("SUPABASE_ANON_KEY", "")
 
-    if not url or not key:
+    if not url or not anon_key:
         logger.debug(
-            "[Ledger] SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set — "
+            "[Ledger] SUPABASE_URL or SUPABASE_ANON_KEY not set — "
             "Logic Ledger sync disabled."
         )
-        return None
+        _client = None
+        return
+
+    if not access_token:
+        logger.debug("[Ledger] No JWT provided — Logic Ledger sync disabled.")
+        _client = None
+        return
 
     try:
         from supabase import create_client
 
-        _client = create_client(url, key)
-        logger.info("[Ledger] Supabase client initialised.")
+        client = create_client(url, anon_key)
+        # Override the session with the user's JWT so RLS policies apply.
+        client.auth.set_session(access_token, access_token)
+        _client = client
+        logger.info("[Ledger] Supabase client initialised with user JWT (uid=%s).", uid)
     except Exception as exc:
-        logger.warning("[Ledger] Failed to initialise Supabase client: %s", exc)
+        logger.warning("[Ledger] Failed to initialise Supabase client with JWT: %s", exc)
+        _client = None
 
+
+def _get_client() -> "Client | None":
+    """Return the current per-session Supabase client.
+
+    Returns None when no JWT has been provided yet (pre-login), so callers
+    can safely no-op without extra checks.
+    """
+    if _client is None:
+        logger.debug("[Ledger] No authenticated Supabase client — sync skipped.")
     return _client
 
 

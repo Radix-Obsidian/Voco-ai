@@ -112,23 +112,16 @@ export function SettingsModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="bg-zinc-950 border-zinc-800 text-zinc-100 sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-emerald-500">
+          <DialogTitle className="flex items-center gap-2 text-voco-cyan">
             <Settings className="h-5 w-5" />
             Voco Settings
           </DialogTitle>
           <DialogDescription className="text-zinc-400">
-            Bring Your Own Keys. All keys are stored locally on your device.
+            Audio & Voice Settings. Keys are stored locally on your device.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          <KeyField
-            id="anthropic"
-            label="Anthropic API Key"
-            value={settings.ANTHROPIC_API_KEY}
-            placeholder="sk-ant-..."
-            onChange={(v) => onUpdate("ANTHROPIC_API_KEY", v)}
-          />
           <KeyField
             id="deepgram"
             label="Deepgram API Key"
@@ -196,7 +189,7 @@ export function SettingsModal({
               {syncStatus === "syncing" ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               ) : (
-                <Zap className="h-4 w-4 mr-2 text-emerald-400" />
+                <Zap className="h-4 w-4 mr-2 text-voco-cyan" />
               )}
               {syncStatus === "syncing" ? "Syncing…" : "Sync to Cursor / Windsurf"}
             </Button>
@@ -206,7 +199,7 @@ export function SettingsModal({
                 {syncResults.map((r) => (
                   <div key={r.ide} className="flex items-start gap-2 text-xs">
                     {r.success ? (
-                      <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0 text-emerald-400" />
+                      <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0 text-voco-cyan" />
                     ) : (
                       <XCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-red-400" />
                     )}
@@ -225,7 +218,7 @@ export function SettingsModal({
               onSave();
               onOpenChange(false);
             }}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white"
+            className="bg-gradient-to-r from-voco-purple to-voco-cyan hover:opacity-90 text-white"
           >
             <Save className="h-4 w-4 mr-2" />
             Save & Apply

@@ -11,7 +11,9 @@ import { SettingsModal } from "@/components/SettingsModal";
 import { PricingModal } from "@/components/PricingModal";
 import { OnboardingTour } from "@/components/OnboardingTour";
 import { SandboxPreview } from "@/components/SandboxPreview";
-import { Mic, Send, ArrowRight } from "lucide-react";
+import { FeedbackWidget } from "@/components/FeedbackWidget";
+import { Mic, Send } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
 
 const AppPage = () => {
   const {
@@ -32,9 +34,12 @@ const AppPage = () => {
     sandboxUrl,
     sandboxRefreshKey,
     setSandboxUrl,
+    sendAuthSync,
+    liveTranscript,
   } = useVocoSocket();
 
   const { settings, updateSetting, hasRequiredKeys, pushToBackend, saveSettings } = useSettings();
+  const { session } = useAuth();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
   const [mode, setMode] = useState<"speak" | "type">("speak");
@@ -51,11 +56,13 @@ const AppPage = () => {
     return () => disconnect();
   }, [connect, disconnect]);
 
+  const needsKeys = !hasRequiredKeys;
   useEffect(() => {
-    if (!hasRequiredKeys) {
-      setSettingsOpen(true);
+    if (needsKeys) {
+      const id = requestAnimationFrame(() => setSettingsOpen(true));
+      return () => cancelAnimationFrame(id);
     }
-  }, [hasRequiredKeys]);
+  }, [needsKeys]);
 
   // Auto-start mic in speak mode when connected
   useEffect(() => {
@@ -69,6 +76,31 @@ const AppPage = () => {
 
   const handleCloseTerminal = () => setTerminalOutput(null);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      // Cmd/Ctrl+K — toggle voice/text mode
+      if (mod && e.key === "k") {
+        e.preventDefault();
+        setMode((prev) => (prev === "speak" ? "type" : "speak"));
+      }
+      // Cmd/Ctrl+, — open settings
+      if (mod && e.key === ",") {
+        e.preventDefault();
+        setSettingsOpen(true);
+      }
+      // Escape — close modals / stop capture
+      if (e.key === "Escape") {
+        if (settingsOpen) setSettingsOpen(false);
+        else if (pricingOpen) setPricingOpen(false);
+        else if (isCapturing) stopCapture();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [settingsOpen, pricingOpen, isCapturing, stopCapture]);
+
   const handleSettingsSave = () => {
     saveSettings();                   // persist to OS config file
     pushToBackend(wsRef.current);     // push to Python over WebSocket
@@ -78,6 +110,13 @@ const AppPage = () => {
   useEffect(() => {
     if (isConnected) pushToBackend(wsRef.current);
   }, [isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Send auth session to Python backend whenever WS connects or session changes.
+  useEffect(() => {
+    if (isConnected && session?.access_token && session.user?.id) {
+      sendAuthSync(session.access_token, session.user.id);
+    }
+  }, [isConnected, session, sendAuthSync]);
 
   const handleSendText = useCallback(() => {
     if (!textInput.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
@@ -117,7 +156,7 @@ const AppPage = () => {
         <div className="flex flex-col items-center gap-8">
           {/* Connection status dot */}
           <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-voco-emerald" : "bg-red-500"}`} />
+            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-voco-purple" : "bg-red-500"}`} />
             <span>{isConnected ? "Connected" : "Connecting..."}</span>
           </div>
 
@@ -133,8 +172,8 @@ const AppPage = () => {
               bg-[#0D0D0D] border border-white/[0.06]
               transition-all duration-500 cursor-pointer
               ${isCapturing
-                ? "animate-orb-listening shadow-emerald-glow-lg"
-                : "animate-orb-pulse hover:shadow-emerald-glow"
+                ? "animate-orb-listening shadow-voco-glow-lg"
+                : "animate-orb-pulse hover:shadow-voco-glow"
               }
               ${bargeInActive ? "!shadow-[0_0_40px_rgba(239,68,68,0.5)]" : ""}
               disabled:opacity-30 disabled:cursor-not-allowed
@@ -144,7 +183,7 @@ const AppPage = () => {
             <div className={`
               absolute inset-2 rounded-full border transition-all duration-500
               ${isCapturing
-                ? "border-voco-emerald/40 bg-voco-emerald/[0.06]"
+                ? "border-voco-purple/40 bg-voco-purple/[0.06]"
                 : "border-white/[0.04] bg-transparent"
               }
             `} />
@@ -152,9 +191,16 @@ const AppPage = () => {
             {/* Mic icon */}
             <Mic className={`
               w-8 h-8 relative z-10 transition-colors duration-300
-              ${isCapturing ? "text-voco-emerald" : "text-zinc-500"}
+              ${isCapturing ? "text-voco-purple" : "text-zinc-500"}
             `} />
           </button>
+
+          {/* Live transcript */}
+          {liveTranscript && isCapturing && (
+            <p className="text-sm text-zinc-300 max-w-sm text-center italic animate-pulse">
+              "{liveTranscript}"
+            </p>
+          )}
 
           {/* Status text */}
           <p className="text-sm text-zinc-500">
@@ -174,7 +220,7 @@ const AppPage = () => {
             className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs text-zinc-500 hover:text-zinc-300 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.04] transition-all"
           >
             Type instead
-            <ArrowRight className="w-3 h-3" />
+            <kbd className="ml-1.5 px-1.5 py-0.5 rounded bg-white/[0.06] text-[10px] text-zinc-600 font-mono">⌘K</kbd>
           </button>
         </div>
       ) : (
@@ -182,7 +228,7 @@ const AppPage = () => {
         <div className="flex flex-col items-center gap-6 w-full max-w-xl">
           {/* Connection dot */}
           <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-voco-emerald" : "bg-red-500"}`} />
+            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-voco-purple" : "bg-red-500"}`} />
             <span>{isConnected ? "Connected" : "Connecting..."}</span>
           </div>
 
@@ -194,12 +240,12 @@ const AppPage = () => {
               onKeyDown={handleKeyDown}
               placeholder="Dump your raw thoughts here..."
               rows={4}
-              className="w-full resize-none rounded-xl bg-[#111] border border-white/[0.06] text-sm text-zinc-200 placeholder-zinc-600 p-4 pr-12 focus:outline-none focus:border-voco-emerald/30 focus:shadow-emerald-glow-sm transition-all"
+              className="w-full resize-none rounded-xl bg-[#111] border border-white/[0.06] text-sm text-zinc-200 placeholder-zinc-600 p-4 pr-12 focus:outline-none focus:border-voco-purple/30 focus:shadow-voco-glow-sm transition-all"
             />
             <button
               onClick={handleSendText}
               disabled={!textInput.trim() || !isConnected}
-              className="absolute bottom-3 right-3 flex items-center justify-center w-8 h-8 rounded-lg bg-voco-emerald text-black hover:bg-voco-emerald/90 transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+              className="absolute bottom-3 right-3 flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r from-voco-purple to-voco-cyan text-white hover:opacity-90 transition-opacity disabled:opacity-20 disabled:cursor-not-allowed"
             >
               <Send className="w-4 h-4" />
             </button>
@@ -212,6 +258,7 @@ const AppPage = () => {
           >
             <Mic className="w-3 h-3" />
             Speak instead
+            <kbd className="ml-1.5 px-1.5 py-0.5 rounded bg-white/[0.06] text-[10px] text-zinc-600 font-mono">⌘K</kbd>
           </button>
         </div>
       )}
@@ -264,6 +311,8 @@ const AppPage = () => {
           }}
         />
       )}
+
+      <FeedbackWidget />
     </div>
   );
 };
