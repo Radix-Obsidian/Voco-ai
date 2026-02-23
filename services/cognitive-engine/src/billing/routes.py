@@ -191,31 +191,40 @@ async def stripe_webhook(request: Request) -> Response:
 # ---------------------------------------------------------------------------
 
 
-async def report_voice_turn(quantity: int = 1) -> None:
-    """Increment the Stripe meter by ``quantity`` voice turns.
+async def report_voice_turn(quantity: int = 1, customer_id: str = "") -> None:
+    """Emit a Stripe Billing Meter Event for each completed heavy voice turn.
+
+    Uses the new Stripe Meters API (2025-03-31.basil+).  The meter event
+    is identified by STRIPE_METER_EVENT_NAME (default: heavy_voice_turn).
 
     Fire-and-forget safe: all errors are caught and logged so a Stripe outage
     never blocks the voice pipeline.  Uses ``asyncio.to_thread`` because the
     stripe-python SDK is synchronous.
     """
     key = os.environ.get("STRIPE_SECRET_KEY", "")
-    item_id = _get_meter_item_id()
+    event_name = os.environ.get("STRIPE_METER_EVENT_NAME", "heavy_voice_turn")
 
-    if not key or not item_id:
-        logger.debug("[Billing] Usage reporting skipped (Stripe not fully configured).")
+    if not key:
+        logger.debug("[Billing] Usage reporting skipped (STRIPE_SECRET_KEY not set).")
+        return
+
+    if not customer_id:
+        logger.debug("[Billing] Usage reporting skipped (no customer_id for this session).")
         return
 
     def _report() -> None:
         stripe.api_key = key
-        stripe.SubscriptionItem.create_usage_record(
-            item_id,
-            quantity=quantity,
-            action="increment",
+        stripe.billing.MeterEvent.create(
+            event_name=event_name,
+            payload={
+                "stripe_customer_id": customer_id,
+                "value": str(quantity),
+            },
         )
 
     try:
         await asyncio.to_thread(_report)
-        logger.info("[Billing] Reported %d voice turn(s) → meter %s.", quantity, item_id)
+        logger.info("[Billing] Meter event '%s' ×%d → customer %s.", event_name, quantity, customer_id)
     except Exception as exc:
         logger.warning("[Billing] Usage report failed (non-fatal): %s", exc)
 
