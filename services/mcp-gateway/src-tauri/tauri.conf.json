@@ -39,7 +39,8 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/rg"
+      "binaries/rg",
+      "binaries/synapse-mcp"
     ],
     "createUpdaterArtifacts": true
   },

@@ -8,6 +8,7 @@ Critical: All logging goes to stderr to prevent stdout corruption of the JSON-RP
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -96,7 +97,7 @@ async def analyze_video(url: str, extraction_goal: str) -> str:
         # Poll until file is ACTIVE (required before generation)
         logger.info(f"Waiting for file processing (name: {uploaded_file.name})...")
         while uploaded_file.state.name == "PROCESSING":
-            time.sleep(2)
+            await asyncio.sleep(2)
             uploaded_file = genai.get_file(uploaded_file.name)
         
         if uploaded_file.state.name != "ACTIVE":

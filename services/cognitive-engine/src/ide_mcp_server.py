@@ -198,7 +198,7 @@ def attach_ide_mcp_routes(app: FastAPI) -> None:
         """SSE endpoint — IDEs connect here to establish the MCP session."""
         logger.info("[IDE MCP] IDE connected from %s", request.client)
         async with _sse.connect_sse(
-            request.scope, request.receive, request._send
+            request.scope, request.receive, request._send  # type: ignore[attr-defined]
         ) as streams:
             await _mcp.run(
                 streams[0],
@@ -210,7 +210,7 @@ def attach_ide_mcp_routes(app: FastAPI) -> None:
     async def handle_mcp_messages(request: Request) -> None:
         """JSON-RPC message endpoint — IDEs POST tool calls here."""
         await _sse.handle_post_message(
-            request.scope, request.receive, request._send
+            request.scope, request.receive, request._send  # type: ignore[attr-defined]
         )
 
     logger.info("[IDE MCP] Routes live: GET /mcp, POST /mcp/messages")

@@ -313,13 +313,11 @@ async def voco_stream(websocket: WebSocket) -> None:
             vad.reset()
             audio_buffer = bytearray()
 
-            # Wait for proposal_decision from frontend
+            # Wait for proposal_decision from frontend (filtered receive)
             decisions = []
             try:
-                raw = await websocket.receive_text()
-                decision_msg = json.loads(raw)
-                if decision_msg.get("type") == "proposal_decision":
-                    decisions = decision_msg.get("decisions", [])
+                decision_msg = await _receive_filtered("proposal_decision", timeout=120.0)
+                decisions = decision_msg.get("decisions", [])
             except Exception as exc:
                 logger.warning("[Pipeline] Proposal decision error: %s", exc)
 
@@ -386,13 +384,11 @@ async def voco_stream(websocket: WebSocket) -> None:
             vad.reset()
             audio_buffer = bytearray()
 
-            # Wait for command_decision from frontend
+            # Wait for command_decision from frontend (filtered receive)
             cmd_decisions = []
             try:
-                raw = await websocket.receive_text()
-                decision_msg = json.loads(raw)
-                if decision_msg.get("type") == "command_decision":
-                    cmd_decisions = decision_msg.get("decisions", [])
+                decision_msg = await _receive_filtered("command_decision", timeout=120.0)
+                cmd_decisions = decision_msg.get("decisions", [])
             except Exception as exc:
                 logger.warning("[Pipeline] Command decision error: %s", exc)
 
@@ -610,7 +606,9 @@ async def voco_stream(websocket: WebSocket) -> None:
             # ----------------------------------------------------------------
             if not _screen_handled:
                 _fallback_path = (
-                    result.get("active_project_path") or os.environ.get("VOCO_PROJECT_PATH", "")
+                    tool_args.get("project_path", "")
+                    or result.get("active_project_path")
+                    or os.environ.get("VOCO_PROJECT_PATH", "")
                 )
                 rpc_payload = {
                     "type": "mcp_request",
@@ -774,7 +772,7 @@ async def voco_stream(websocket: WebSocket) -> None:
         audio_buffer = bytearray()
 
         # --- Stripe Seat + Meter: report one voice turn (fire and forget) ---
-        asyncio.create_task(report_voice_turn())
+        asyncio.create_task(report_voice_turn(customer_id=_auth_uid))
 
         # --- Supabase Logic Ledger sync ---
         domain_icon = {"database": "Database", "ui": "FileCode2", "api": "Terminal", "devops": "Terminal", "git": "Terminal", "general": "FileCode2"}
@@ -815,6 +813,44 @@ async def voco_stream(websocket: WebSocket) -> None:
                 await _send_ledger_clear()
             except Exception:
                 pass
+
+    async def _receive_filtered(expected_type: str, timeout: float = 60.0) -> dict:
+        """Receive text messages, draining non-matching ones, until expected_type arrives."""
+        import time as _time
+        deadline = _time.monotonic() + timeout
+        while True:
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                return {}
+            raw = await asyncio.wait_for(websocket.receive_text(), timeout=remaining)
+            payload = json.loads(raw)
+            msg_type = payload.get("type", "")
+            if msg_type == expected_type:
+                return payload
+            # Route known message types so they aren't lost
+            if msg_type == "mcp_result" or ("jsonrpc" in payload and "id" in payload and "type" not in payload):
+                msg_id = payload.get("id", "")
+                future = _pending_rpc_futures.get(msg_id)
+                if future and not future.done():
+                    future.set_result(raw)
+            elif msg_type == "text_input":
+                text = payload.get("text", "").strip()
+                if text:
+                    asyncio.create_task(_safe_text_input(text))
+            elif msg_type == "auth_sync":
+                nonlocal _auth_token, _auth_uid
+                _auth_token = payload.get("token", "")
+                _auth_uid = payload.get("uid", "local")
+                from src.db import set_auth_jwt
+                set_auth_jwt(_auth_token, _auth_uid)
+            elif msg_type == "update_env":
+                env_patch = payload.get("env", {})
+                allowed_keys = {"DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "GITHUB_TOKEN", "TTS_VOICE", "SUPABASE_URL"}
+                for k, v in env_patch.items():
+                    if k in allowed_keys and isinstance(v, str) and v:
+                        os.environ[k] = v
+            else:
+                logger.debug("[WS] Draining unexpected message while waiting for %s: %s", expected_type, msg_type)
 
     vad.on_barge_in = _on_barge_in
     vad.on_turn_end = _safe_turn_end
@@ -886,6 +922,21 @@ async def voco_stream(websocket: WebSocket) -> None:
                             if k in allowed_keys and isinstance(v, str) and v:
                                 os.environ[k] = v
                         logger.info("[WS] Environment updated: %s", list(env_patch.keys()))
+                    elif "jsonrpc" in payload and "id" in payload and "type" not in payload:
+                        # JSON-RPC response from Tauri (no "type" field).
+                        # Route to the awaiting background job future.
+                        msg_id = payload.get("id", "")
+                        future = _pending_rpc_futures.get(msg_id)
+                        if future and not future.done():
+                            future.set_result(message["text"])
+                            logger.info(
+                                "[WS] Routed JSON-RPC response (call_id=%s) to background job.", msg_id
+                            )
+                        else:
+                            logger.debug(
+                                "[WS] JSON-RPC response with no pending future (call_id=%s).",
+                                msg_id,
+                            )
                     else:
                         logger.debug("[WS] Control message: %s", payload)
                 except json.JSONDecodeError:

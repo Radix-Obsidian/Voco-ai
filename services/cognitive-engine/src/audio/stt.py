@@ -65,29 +65,27 @@ class DeepgramSTT:
 
         Uses Deepgram's streaming WebSocket endpoint with ``interim_results``.
         """
-        import httpx
+        import websockets
 
         ws_url = (
             f"{self.WS_URL}"
             f"?encoding=linear16&sample_rate={self._sample_rate}"
             f"&channels=1&model=nova-2&interim_results=true"
         )
-        async with httpx.AsyncClient() as client:
-            async with client.websocket_connect(
-                ws_url, headers={"Authorization": f"Token {self._api_key}"}
-            ) as ws:
-                async for chunk in audio_chunks:
-                    await ws.send(chunk)
-                    raw = await ws.receive()
-                    text = raw if isinstance(raw, str) else raw.decode()
-                    try:
-                        payload = json.loads(text)
-                        transcript = (
-                            payload.get("channel", {})
-                            .get("alternatives", [{}])[0]
-                            .get("transcript", "")
-                        )
-                        if transcript:
-                            yield transcript
-                    except (json.JSONDecodeError, IndexError):
-                        continue
+        extra_headers = {"Authorization": f"Token {self._api_key}"}
+        async with websockets.connect(ws_url, extra_headers=extra_headers) as ws:
+            async for chunk in audio_chunks:
+                await ws.send(chunk)
+                raw = await ws.recv()
+                text = raw if isinstance(raw, str) else raw.decode()
+                try:
+                    payload = json.loads(text)
+                    transcript = (
+                        payload.get("channel", {})
+                        .get("alternatives", [{}])[0]
+                        .get("transcript", "")
+                    )
+                    if transcript:
+                        yield transcript
+                except (json.JSONDecodeError, IndexError):
+                    continue

@@ -61,7 +61,7 @@ def set_auth_jwt(access_token: str, uid: str) -> None:
 
         client = create_client(url, anon_key)
         # Override the session with the user's JWT so RLS policies apply.
-        client.auth.set_session(access_token, access_token)
+        client.auth.set_session(access_token, "")
         _client = client
         logger.info("[Ledger] Supabase client initialised with user JWT (uid=%s).", uid)
     except Exception as exc:
