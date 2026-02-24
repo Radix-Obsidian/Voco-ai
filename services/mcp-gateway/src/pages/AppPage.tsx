@@ -15,8 +15,13 @@ import { FeedbackWidget } from "@/components/FeedbackWidget";
 import { Mic, Send } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useAppUpdater } from "@/hooks/use-app-updater";
+import { useDemoMode } from "@/hooks/use-demo-mode";
+
+const isDemoMode = new URLSearchParams(window.location.search).get("demo") === "true";
 
 const AppPage = () => {
+  const liveSocket = useVocoSocket();
+  const demoSocket = useDemoMode();
   const {
     isConnected,
     bargeInActive,
@@ -37,7 +42,7 @@ const AppPage = () => {
     setSandboxUrl,
     sendAuthSync,
     liveTranscript,
-  } = useVocoSocket();
+  } = isDemoMode ? demoSocket : liveSocket;
 
   const { settings, updateSetting, hasRequiredKeys, pushToBackend, saveSettings } = useSettings();
   const { session } = useAuth();
@@ -51,7 +56,7 @@ const AppPage = () => {
     return parseInt(localStorage.getItem("voco-free-turns") ?? "0", 10);
   });
   const userTier: string = localStorage.getItem("voco-tier") ?? "free";
-  const atTurnLimit = userTier === "free" && turnCount >= FREE_TURN_LIMIT;
+  const atTurnLimit = !isDemoMode && userTier === "free" && turnCount >= FREE_TURN_LIMIT;
   const prevTerminalOutput = useRef<TerminalOutput | null>(null);
   const [mode, setMode] = useState<"speak" | "type">("speak");
   const [textInput, setTextInput] = useState("");
@@ -67,7 +72,7 @@ const AppPage = () => {
     return () => disconnect();
   }, [connect, disconnect]);
 
-  const needsKeys = !hasRequiredKeys;
+  const needsKeys = !isDemoMode && !hasRequiredKeys;
   useEffect(() => {
     if (needsKeys) {
       const id = requestAnimationFrame(() => setSettingsOpen(true));
@@ -179,7 +184,7 @@ const AppPage = () => {
     <main
       className={`flex flex-col items-center justify-center px-6 transition-all duration-500
         ${isSandboxActive ? "w-[420px] min-w-[340px] shrink-0 h-full" : "min-h-screen flex-1"}
-        ${!hasRequiredKeys ? "blur-sm pointer-events-none select-none opacity-50" : ""}
+        ${!isDemoMode && !hasRequiredKeys ? "blur-sm pointer-events-none select-none opacity-50" : ""}
       `}
     >
       {mode === "speak" ? (

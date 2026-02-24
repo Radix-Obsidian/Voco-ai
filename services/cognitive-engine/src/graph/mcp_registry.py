@@ -21,7 +21,9 @@ logger = logging.getLogger(__name__)
 # Resolve the default config path relative to this file so the registry
 # finds voco-mcp.json at the project root regardless of the working directory.
 # Path: mcp_registry.py → graph/ → src/ → cognitive-engine/ → services/ → Voco-ai/
-_PROJECT_ROOT = Path(__file__).parents[4]
+# In Docker the path is shorter (/app/src/graph/), so we climb safely.
+_MAX_PARENTS = len(Path(__file__).parents) - 1
+_PROJECT_ROOT = Path(__file__).parents[min(4, _MAX_PARENTS)]
 _DEFAULT_CONFIG_PATH = str(_PROJECT_ROOT / "voco-mcp.json")
 
 

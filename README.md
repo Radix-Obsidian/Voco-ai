@@ -1,8 +1,12 @@
 # Voco V2
 
-**The Voice-to-Context Engine for AI-Native Builders**
+[![CI](https://github.com/Radix-Obsidian/Voco-ai/actions/workflows/release.yml/badge.svg)](https://github.com/Radix-Obsidian/Voco-ai/actions/workflows/release.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Community-7289da?logo=discord&logoColor=white)](https://discord.gg/voco)
 
-Voco turns 60-second voice memos into production-ready architectural context. Your AI agent finally understands what you actually mean.
+**The Voice-Native Coding Orchestrator — Sub-300ms Voice-to-Action**
+
+Voco is a local-first, zero-trust voice interface for developers. Speak naturally and Voco will search your codebase, generate code, run terminal commands, and explain results — all with human-in-the-loop approval.
 
 ## Quick Start (5 Minutes)
 
@@ -130,7 +134,7 @@ The app will be available at `http://localhost:8080`.
 ├── services/
 │   └── mcp-gateway/
 │       ├── src/
-│       │   ├── assets/            # SVG branding (logo, mascot, icon)
+│       │   ├── assets/            # Branding assets (logo, icon)
 │       │   ├── components/
 │       │   │   ├── ui/            # Shadcn UI primitives (48 components)
 │       │   │   ├── AuthModal.tsx   # Supabase email/password + Google OAuth
@@ -158,12 +162,23 @@ Detailed documentation lives in the `Docs/` directory:
 - **Core-Features-List.md** — Complete feature inventory
 - **GTM.md** — Go-to-market strategy
 
+## Community
+
+- **Discord**: [Join the community](https://discord.gg/voco)
+- **GitHub Issues**: [Report bugs or request features](https://github.com/Radix-Obsidian/Voco-ai/issues)
+- **Contributing**: See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines
+- **Code of Conduct**: See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- **Security**: See [SECURITY.md](SECURITY.md) for responsible disclosure
+
 ## Contributing
 
-1. Create a feature branch from `main`
-2. Make your changes
-3. Submit a pull request with a clear description
+We welcome contributions! Please read our [Contributing Guide](CONTRIBUTING.md) before submitting a pull request.
+
+1. Fork the repository
+2. Create a feature branch from `main`
+3. Make your changes and add tests
+4. Submit a pull request with a clear description
 
 ## License
 
-Proprietary. All rights reserved.
+Licensed under the [Apache License 2.0](LICENSE).

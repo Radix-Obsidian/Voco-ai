@@ -11,7 +11,9 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   return invoke<T>(cmd, args);
 }
 
-const WS_URL = "ws://localhost:8001/ws/voco-stream";
+const WS_URL = import.meta.env.VITE_COGNITIVE_ENGINE_WS
+  ?? localStorage.getItem("voco-ws-url")
+  ?? "ws://localhost:8001/ws/voco-stream";
 
 export interface TerminalOutput {
   command: string;

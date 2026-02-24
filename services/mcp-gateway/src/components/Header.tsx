@@ -16,8 +16,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import vocoLogo from "@/assets/voco-logo.svg";
-import vocoIcon from "@/assets/voco-icon.svg";
+import vocoLogo from "@/assets/voco-logo.jpg";
+import vocoIcon from "@/assets/voco-icon.png";
 import { useWorkspaces, type Workspace } from "@/hooks/use-workspaces";
 import { useVocoProjects, type VocoProject } from "@/hooks/use-voco-projects";
 import { useAuth } from "@/hooks/use-auth";

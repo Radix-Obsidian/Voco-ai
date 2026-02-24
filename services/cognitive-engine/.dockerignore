@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+voco_cognitive_engine.egg-info/
+.git/
+.env
+.env.production
+*.md
+tests/
+deploy.ps1
+DEPLOY.md
+logs/
