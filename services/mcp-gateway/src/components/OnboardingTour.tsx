@@ -56,9 +56,9 @@ export function OnboardingTour({ onComplete }: OnboardingTourProps) {
               key={i}
               className={`h-1 rounded-full transition-all duration-300 ${
                 i === step
-                  ? "w-6 bg-gradient-to-r from-voco-purple to-voco-cyan"
+                  ? "w-6 bg-gradient-to-r from-voco-green to-voco-cyan"
                   : i < step
-                    ? "w-3 bg-voco-purple/40"
+                    ? "w-3 bg-voco-green/40"
                     : "w-3 bg-zinc-700 border border-dashed border-zinc-600"
               }`}
             />
@@ -66,7 +66,7 @@ export function OnboardingTour({ onComplete }: OnboardingTourProps) {
         </div>
 
         {/* Icon */}
-        <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-voco-purple/10 border border-voco-cyan/20 mb-6">
+        <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-voco-green/10 border border-voco-cyan/20 mb-6">
           <Icon className="w-6 h-6 text-voco-cyan" />
         </div>
 
@@ -89,7 +89,7 @@ export function OnboardingTour({ onComplete }: OnboardingTourProps) {
               if (isLast) onComplete();
               else setStep(step + 1);
             }}
-            className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-voco-purple to-voco-cyan text-white text-sm font-medium hover:opacity-90 transition-opacity shadow-voco-glow-sm"
+            className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-voco-green to-voco-cyan text-white text-sm font-medium hover:opacity-90 transition-opacity shadow-voco-glow-sm"
           >
             {isLast ? "Get Started" : "Next"}
           </button>

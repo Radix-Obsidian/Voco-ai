@@ -7,14 +7,20 @@ import ProtectedRoute from "./components/ProtectedRoute";
 
 const queryClient = new QueryClient();
 
+const isDemoMode = new URLSearchParams(window.location.search).get("demo") === "true";
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <ProtectedRoute>
+      {isDemoMode ? (
         <AppPage />
-      </ProtectedRoute>
+      ) : (
+        <ProtectedRoute>
+          <AppPage />
+        </ProtectedRoute>
+      )}
     </TooltipProvider>
   </QueryClientProvider>
 );

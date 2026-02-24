@@ -40,7 +40,7 @@ export function FeedbackWidget() {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-voco-purple to-voco-cyan hover:opacity-90 text-white text-sm font-medium shadow-lg shadow-voco-purple/30 transition-all hover:scale-105"
+        className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-voco-green to-voco-cyan hover:opacity-90 text-white text-sm font-medium shadow-lg shadow-voco-green/30 transition-all hover:scale-105"
       >
         <MessageSquareHeart className="h-4 w-4" />
         Feedback
@@ -92,7 +92,7 @@ export function FeedbackWidget() {
         <button
           onClick={handleSubmit}
           disabled={sending || (!message.trim() && rating === 0)}
-          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-gradient-to-r from-voco-purple to-voco-cyan hover:opacity-90 text-white text-sm font-medium transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-gradient-to-r from-voco-green to-voco-cyan hover:opacity-90 text-white text-sm font-medium transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           {sending ? "Sending..." : "Send Feedback"}

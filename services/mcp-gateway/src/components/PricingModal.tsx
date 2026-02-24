@@ -30,7 +30,7 @@ const PRO_FEATURES = [
   { text: "Live MVP Sandbox Rendering", icon: <Check className="w-4 h-4 text-emerald-500" /> },
   { text: "GitHub issue & PR automation", icon: <Check className="w-4 h-4 text-emerald-500" /> },
   { text: "Zero API key leaks (cloud secured)", icon: <ShieldCheck className="w-4 h-4 text-emerald-500" /> },
-  { text: "Founding Member badge + price lock", icon: <Lock className="w-4 h-4 text-voco-purple" /> },
+  { text: "Founding Member badge + price lock", icon: <Lock className="w-4 h-4 text-voco-green" /> },
 ];
 
 async function openInBrowser(url: string): Promise<void> {
@@ -85,7 +85,7 @@ export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-zinc-100 text-xl">
-            {forcedOpen ? <Lock className="h-5 w-5 text-voco-purple" /> : <Zap className="h-5 w-5 text-voco-cyan" />}
+            {forcedOpen ? <Lock className="h-5 w-5 text-voco-green" /> : <Zap className="h-5 w-5 text-voco-cyan" />}
             {forcedOpen ? "Sandbox Limit Reached" : "Upgrade Voco"}
           </DialogTitle>
           <DialogDescription className="text-zinc-400">
@@ -127,9 +127,9 @@ export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail
           </div>
 
           {/* Founding Architect card */}
-          <div className="flex flex-col rounded-xl border border-voco-purple/40 bg-voco-purple/5 p-5 relative overflow-hidden">
+          <div className="flex flex-col rounded-xl border border-voco-green/40 bg-voco-green/5 p-5 relative overflow-hidden">
             {/* Glow accent */}
-            <div className="absolute inset-0 rounded-xl pointer-events-none ring-1 ring-voco-purple/20" />
+            <div className="absolute inset-0 rounded-xl pointer-events-none ring-1 ring-voco-green/20" />
 
             <div className="mb-4">
               <div className="flex items-center justify-between mb-1">
@@ -161,7 +161,7 @@ export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail
             <Button
               onClick={handleUpgrade}
               disabled={loading}
-              className="w-full bg-gradient-to-r from-voco-purple to-voco-cyan hover:opacity-90 text-white font-semibold py-2.5 rounded-lg transition-colors"
+              className="w-full bg-gradient-to-r from-voco-green to-voco-cyan hover:opacity-90 text-white font-semibold py-2.5 rounded-lg transition-colors"
             >
               {loading ? (
                 <>

@@ -218,7 +218,7 @@ export function SettingsModal({
               onSave();
               onOpenChange(false);
             }}
-            className="bg-gradient-to-r from-voco-purple to-voco-cyan hover:opacity-90 text-white"
+            className="bg-gradient-to-r from-voco-green to-voco-cyan hover:opacity-90 text-white"
           >
             <Save className="h-4 w-4 mr-2" />
             Save & Apply

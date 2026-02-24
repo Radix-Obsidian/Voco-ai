@@ -192,7 +192,7 @@ const AppPage = () => {
         <div className="flex flex-col items-center gap-8">
           {/* Connection status dot */}
           <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-voco-purple" : "bg-red-500"}`} />
+            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-voco-green" : "bg-red-500"}`} />
             <span>{isConnected ? "Connected" : "Connecting..."}</span>
           </div>
 
@@ -219,7 +219,7 @@ const AppPage = () => {
             <div className={`
               absolute inset-2 rounded-full border transition-all duration-500
               ${isCapturing
-                ? "border-voco-purple/40 bg-voco-purple/[0.06]"
+                ? "border-voco-green/40 bg-voco-green/[0.06]"
                 : "border-white/[0.04] bg-transparent"
               }
             `} />
@@ -227,7 +227,7 @@ const AppPage = () => {
             {/* Mic icon */}
             <Mic className={`
               w-8 h-8 relative z-10 transition-colors duration-300
-              ${isCapturing ? "text-voco-purple" : "text-zinc-500"}
+              ${isCapturing ? "text-voco-green" : "text-zinc-500"}
             `} />
           </button>
 
@@ -264,7 +264,7 @@ const AppPage = () => {
         <div className="flex flex-col items-center gap-6 w-full max-w-xl">
           {/* Connection dot */}
           <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-voco-purple" : "bg-red-500"}`} />
+            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-voco-green" : "bg-red-500"}`} />
             <span>{isConnected ? "Connected" : "Connecting..."}</span>
           </div>
 
@@ -276,12 +276,12 @@ const AppPage = () => {
               onKeyDown={handleKeyDown}
               placeholder="Dump your raw thoughts here..."
               rows={4}
-              className="w-full resize-none rounded-xl bg-[#111] border border-white/[0.06] text-sm text-zinc-200 placeholder-zinc-600 p-4 pr-12 focus:outline-none focus:border-voco-purple/30 focus:shadow-voco-glow-sm transition-all"
+              className="w-full resize-none rounded-xl bg-[#111] border border-white/[0.06] text-sm text-zinc-200 placeholder-zinc-600 p-4 pr-12 focus:outline-none focus:border-voco-green/30 focus:shadow-voco-glow-sm transition-all"
             />
             <button
               onClick={handleSendText}
               disabled={!textInput.trim() || !isConnected}
-              className="absolute bottom-3 right-3 flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r from-voco-purple to-voco-cyan text-white hover:opacity-90 transition-opacity disabled:opacity-20 disabled:cursor-not-allowed"
+              className="absolute bottom-3 right-3 flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r from-voco-green to-voco-cyan text-white hover:opacity-90 transition-opacity disabled:opacity-20 disabled:cursor-not-allowed"
             >
               <Send className="w-4 h-4" />
             </button>

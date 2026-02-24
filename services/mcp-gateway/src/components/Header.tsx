@@ -213,7 +213,7 @@ const Header = ({ onOpenSettings, onOpenPricing }: HeaderProps) => {
         <Button
           onClick={onOpenPricing}
           size="sm"
-          className="h-7 px-3 gap-1.5 bg-voco-purple/20 hover:bg-voco-purple/30 text-voco-cyan hover:text-voco-cyan border border-voco-purple/30 text-xs font-medium"
+          className="h-7 px-3 gap-1.5 bg-voco-green/20 hover:bg-voco-green/30 text-voco-cyan hover:text-voco-cyan border border-voco-green/30 text-xs font-medium"
           variant="ghost"
         >
           <Zap className="h-3 w-3" />
