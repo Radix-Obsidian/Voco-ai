@@ -498,6 +498,9 @@ pub async fn search_project(
     app: AppHandle,
     pattern: String,
     project_path: PathBuf,
+    max_count: Option<u32>,
+    file_glob: Option<String>,
+    context_lines: Option<u32>,
 ) -> Result<String, String> {
     // Validate path: accept both Windows (C:\...) and Unix-style (/...) absolute paths
     let path_str = project_path.to_string_lossy();
@@ -514,13 +517,35 @@ pub async fn search_project(
         .to_str()
         .ok_or_else(|| "Invalid project path encoding".to_string())?;
 
+    // Build ripgrep args dynamically
+    let mut rg_args: Vec<String> = vec![
+        "--column".into(),
+        "--line-number".into(),
+        "--no-heading".into(),
+        "--color=never".into(),
+    ];
+
+    if let Some(mc) = max_count {
+        rg_args.push(format!("--max-count={}", mc));
+    }
+    if let Some(ref glob) = file_glob {
+        rg_args.push(format!("--glob={}", glob));
+    }
+    if let Some(ctx) = context_lines {
+        rg_args.push(format!("--context={}", ctx));
+    }
+
+    rg_args.push(pattern);
+    rg_args.push(path_str.to_string());
+
+    let arg_refs: Vec<&str> = rg_args.iter().map(|s| s.as_str()).collect();
+
     // LAYER 2: Execute ripgrep sidecar (scoped via ACL validators)
     let output = app
         .shell()
         .sidecar("rg")
         .map_err(|e| format!("Failed to spawn ripgrep sidecar: {e}"))?
-        .args(["--column", "--line-number", "--no-heading", "--color=never"])
-        .args([&pattern, path_str])
+        .args(&arg_refs)
         .output()
         .await
         .map_err(|e| format!("ripgrep execution failed: {e}"))?;
@@ -534,6 +559,211 @@ pub async fn search_project(
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Read the contents of a file within a project directory, optionally by line range.
+///
+/// # Security
+/// - `file_path` must be absolute and inside `project_root` (canonicalize + starts_with).
+#[tauri::command]
+pub async fn read_file(
+    file_path: PathBuf,
+    project_root: PathBuf,
+    start_line: Option<u32>,
+    end_line: Option<u32>,
+) -> Result<String, String> {
+    if !file_path.is_absolute() {
+        return Err(format!("file_path must be absolute: '{}'", file_path.display()));
+    }
+    if !project_root.is_absolute() {
+        return Err(format!("project_root must be absolute: '{}'", project_root.display()));
+    }
+
+    let canonical_root = project_root
+        .canonicalize()
+        .map_err(|e| format!("Cannot canonicalize project_root: {e}"))?;
+    let canonical_file = file_path
+        .canonicalize()
+        .map_err(|e| format!("Cannot canonicalize file_path: {e}"))?;
+
+    if !canonical_file.starts_with(&canonical_root) {
+        return Err(format!(
+            "Security Violation: file_path '{}' is outside project_root '{}'",
+            file_path.display(),
+            project_root.display()
+        ));
+    }
+
+    let content = std::fs::read_to_string(&canonical_file)
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+
+    // Apply optional line range (1-indexed)
+    match (start_line, end_line) {
+        (Some(start), Some(end)) => {
+            let lines: Vec<&str> = content.lines().collect();
+            let s = (start as usize).saturating_sub(1).min(lines.len());
+            let e = (end as usize).min(lines.len());
+            Ok(lines[s..e].join("\n"))
+        }
+        (Some(start), None) => {
+            let lines: Vec<&str> = content.lines().collect();
+            let s = (start as usize).saturating_sub(1).min(lines.len());
+            Ok(lines[s..].join("\n"))
+        }
+        _ => Ok(content),
+    }
+}
+
+/// List files and directories within a project directory.
+///
+/// # Security
+/// - `dir_path` must be absolute and inside `project_root` (canonicalize + starts_with).
+#[tauri::command]
+pub async fn list_directory(
+    dir_path: PathBuf,
+    project_root: PathBuf,
+    max_depth: Option<u32>,
+) -> Result<String, String> {
+    if !dir_path.is_absolute() {
+        return Err(format!("dir_path must be absolute: '{}'", dir_path.display()));
+    }
+    if !project_root.is_absolute() {
+        return Err(format!("project_root must be absolute: '{}'", project_root.display()));
+    }
+
+    let canonical_root = project_root
+        .canonicalize()
+        .map_err(|e| format!("Cannot canonicalize project_root: {e}"))?;
+    let canonical_dir = dir_path
+        .canonicalize()
+        .map_err(|e| format!("Cannot canonicalize dir_path: {e}"))?;
+
+    if !canonical_dir.starts_with(&canonical_root) {
+        return Err(format!(
+            "Security Violation: dir_path '{}' is outside project_root '{}'",
+            dir_path.display(),
+            project_root.display()
+        ));
+    }
+
+    let depth = max_depth.unwrap_or(3);
+    let mut entries = Vec::new();
+
+    fn walk(
+        base: &std::path::Path,
+        current: &std::path::Path,
+        depth: u32,
+        max_depth: u32,
+        entries: &mut Vec<serde_json::Value>,
+    ) {
+        if depth > max_depth {
+            return;
+        }
+        let read = match std::fs::read_dir(current) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for entry in read.flatten() {
+            let path = entry.path();
+            let rel = path.strip_prefix(base).unwrap_or(&path);
+            let ft = entry.file_type().ok();
+            let is_dir = ft.as_ref().map(|f| f.is_dir()).unwrap_or(false);
+            let size = if is_dir {
+                0
+            } else {
+                entry.metadata().map(|m| m.len()).unwrap_or(0)
+            };
+            entries.push(serde_json::json!({
+                "path": rel.display().to_string().replace('\\', "/"),
+                "type": if is_dir { "directory" } else { "file" },
+                "size": size
+            }));
+            if is_dir {
+                walk(base, &path, depth + 1, max_depth, entries);
+            }
+        }
+    }
+
+    walk(&canonical_dir, &canonical_dir, 1, depth, &mut entries);
+
+    serde_json::to_string(&entries).map_err(|e| format!("Serialization error: {e}"))
+}
+
+/// Find files by glob pattern within a project directory using the bundled ripgrep sidecar.
+///
+/// # Security
+/// - `project_path` must be absolute.
+#[tauri::command]
+pub async fn glob_find(
+    app: AppHandle,
+    pattern: String,
+    project_path: PathBuf,
+    file_type: Option<String>,
+    max_results: Option<u32>,
+) -> Result<String, String> {
+    let path_str_lossy = project_path.to_string_lossy();
+    let is_absolute = project_path.is_absolute() || path_str_lossy.starts_with('/');
+
+    if !is_absolute {
+        return Err(format!(
+            "Project path must be absolute: '{}'",
+            project_path.display()
+        ));
+    }
+
+    let path_str = project_path
+        .to_str()
+        .ok_or_else(|| "Invalid project path encoding".to_string())?;
+
+    // Use rg --files --glob to find matching file names
+    let mut rg_args: Vec<String> = vec!["--files".into()];
+    rg_args.push(format!("--glob={}", pattern));
+    rg_args.push(path_str.to_string());
+
+    let arg_refs: Vec<&str> = rg_args.iter().map(|s| s.as_str()).collect();
+
+    let output = app
+        .shell()
+        .sidecar("rg")
+        .map_err(|e| format!("Failed to spawn ripgrep sidecar: {e}"))?
+        .args(&arg_refs)
+        .output()
+        .await
+        .map_err(|e| format!("ripgrep execution failed: {e}"))?;
+
+    if !output.status.success() && !output.stderr.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.code() != Some(1) {
+            return Err(format!("ripgrep error: {stderr}"));
+        }
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let cap = max_results.unwrap_or(50) as usize;
+    let ft = file_type.unwrap_or_else(|| "file".to_string());
+
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    for line in raw.lines().take(cap) {
+        let p = PathBuf::from(line.trim());
+        let is_dir = p.is_dir();
+        let include = match ft.as_str() {
+            "directory" => is_dir,
+            "any" => true,
+            _ => !is_dir, // "file" default
+        };
+        if include {
+            let rel = p
+                .strip_prefix(&project_path)
+                .map(|r| r.display().to_string())
+                .unwrap_or_else(|_| p.display().to_string());
+            results.push(serde_json::json!({
+                "path": rel.replace('\\', "/"),
+                "type": if is_dir { "directory" } else { "file" }
+            }));
+        }
+    }
+
+    serde_json::to_string(&results).map_err(|e| format!("Serialization error: {e}"))
 }
 
 // ---------------------------------------------------------------------------

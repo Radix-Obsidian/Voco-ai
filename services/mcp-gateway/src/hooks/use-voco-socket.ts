@@ -83,6 +83,8 @@ export function useVocoSocket() {
   const [sandboxUrl, setSandboxUrl] = useState<string | null>(null);
   const [sandboxRefreshKey, setSandboxRefreshKey] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState("");
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<{ code: string; message: string; recoverable: boolean } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRequests = useRef<Map<string, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>>(new Map());
 
@@ -139,7 +141,7 @@ export function useVocoSocket() {
     }
   }, []);
 
-  const handleLocalSearch = useCallback(async (msg: { id: string; params: { pattern: string; project_path: string } }) => {
+  const handleLocalSearch = useCallback(async (msg: { id: string; params: { pattern: string; project_path: string; max_count?: number; file_glob?: string; context_lines?: number } }) => {
     const { id, params } = msg;
 
     setTerminalOutput({
@@ -150,10 +152,15 @@ export function useVocoSocket() {
     });
 
     try {
-      const result = await tauriInvoke<string>("search_project", {
+      const invokeArgs: Record<string, unknown> = {
         pattern: params.pattern,
-        projectPath: params.project_path
-      });
+        projectPath: params.project_path,
+      };
+      if (params.max_count) invokeArgs.maxCount = params.max_count;
+      if (params.file_glob) invokeArgs.fileGlob = params.file_glob;
+      if (params.context_lines) invokeArgs.contextLines = params.context_lines;
+
+      const result = await tauriInvoke<string>("search_project", invokeArgs);
 
       setTerminalOutput({
         command: `$ rg --pattern "${params.pattern}" ${params.project_path}`,
@@ -175,6 +182,125 @@ export function useVocoSocket() {
         error: errorMsg
       });
 
+      sendJsonRpcError(id, -32000, errorMsg);
+    }
+  }, [sendJsonRpcResponse, sendJsonRpcError]);
+
+  const handleReadFile = useCallback(async (msg: { id: string; params: { file_path: string; project_root: string; start_line?: number; end_line?: number } }) => {
+    const { id, params } = msg;
+    const lineRange = params.start_line ? `:${params.start_line}${params.end_line ? `-${params.end_line}` : ""}` : "";
+
+    setTerminalOutput({
+      command: `$ read_file ${params.file_path}${lineRange}`,
+      output: "",
+      isLoading: true,
+      scope: "local"
+    });
+
+    try {
+      const invokeArgs: Record<string, unknown> = {
+        filePath: params.file_path,
+        projectRoot: params.project_root,
+      };
+      if (params.start_line) invokeArgs.startLine = params.start_line;
+      if (params.end_line) invokeArgs.endLine = params.end_line;
+
+      const result = await tauriInvoke<string>("read_file", invokeArgs);
+
+      setTerminalOutput({
+        command: `$ read_file ${params.file_path}${lineRange}`,
+        output: result || "(empty file)",
+        isLoading: false,
+        scope: "local"
+      });
+
+      sendJsonRpcResponse(id, result);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      setTerminalOutput({
+        command: `$ read_file ${params.file_path}${lineRange}`,
+        output: "",
+        isLoading: false,
+        scope: "local",
+        error: errorMsg
+      });
+      sendJsonRpcError(id, -32000, errorMsg);
+    }
+  }, [sendJsonRpcResponse, sendJsonRpcError]);
+
+  const handleListDirectory = useCallback(async (msg: { id: string; params: { dir_path: string; project_root: string; max_depth?: number } }) => {
+    const { id, params } = msg;
+
+    setTerminalOutput({
+      command: `$ list_directory ${params.dir_path} --depth ${params.max_depth ?? 3}`,
+      output: "",
+      isLoading: true,
+      scope: "local"
+    });
+
+    try {
+      const result = await tauriInvoke<string>("list_directory", {
+        dirPath: params.dir_path,
+        projectRoot: params.project_root,
+        maxDepth: params.max_depth ?? 3,
+      });
+
+      setTerminalOutput({
+        command: `$ list_directory ${params.dir_path} --depth ${params.max_depth ?? 3}`,
+        output: result || "(empty directory)",
+        isLoading: false,
+        scope: "local"
+      });
+
+      sendJsonRpcResponse(id, result);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      setTerminalOutput({
+        command: `$ list_directory ${params.dir_path}`,
+        output: "",
+        isLoading: false,
+        scope: "local",
+        error: errorMsg
+      });
+      sendJsonRpcError(id, -32000, errorMsg);
+    }
+  }, [sendJsonRpcResponse, sendJsonRpcError]);
+
+  const handleGlobFind = useCallback(async (msg: { id: string; params: { pattern: string; project_path: string; file_type?: string; max_results?: number } }) => {
+    const { id, params } = msg;
+
+    setTerminalOutput({
+      command: `$ glob_find "${params.pattern}" ${params.project_path}`,
+      output: "",
+      isLoading: true,
+      scope: "local"
+    });
+
+    try {
+      const result = await tauriInvoke<string>("glob_find", {
+        pattern: params.pattern,
+        projectPath: params.project_path,
+        fileType: params.file_type ?? "file",
+        maxResults: params.max_results ?? 50,
+      });
+
+      setTerminalOutput({
+        command: `$ glob_find "${params.pattern}" ${params.project_path}`,
+        output: result || "No files found",
+        isLoading: false,
+        scope: "local"
+      });
+
+      sendJsonRpcResponse(id, result);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      setTerminalOutput({
+        command: `$ glob_find "${params.pattern}" ${params.project_path}`,
+        output: "",
+        isLoading: false,
+        scope: "local",
+        error: errorMsg
+      });
       sendJsonRpcError(id, -32000, errorMsg);
     }
   }, [sendJsonRpcResponse, sendJsonRpcError]);
@@ -296,10 +422,10 @@ export function useVocoSocket() {
     setProposals([]);
   }, []);
 
-  const sendAuthSync = useCallback((token: string, uid: string) => {
+  const sendAuthSync = useCallback((token: string, uid: string, refreshToken?: string) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "auth_sync", token, uid }));
+      ws.send(JSON.stringify({ type: "auth_sync", token, uid, refresh_token: refreshToken || "" }));
       console.log("[VocoSocket] auth_sync sent for uid:", uid);
     }
   }, []);
@@ -328,6 +454,11 @@ export function useVocoSocket() {
       console.log("[VocoSocket] Connected to", WS_URL);
     };
 
+    const slog = (level: "log" | "warn" | "error", ...args: unknown[]) => {
+      const prefix = sessionId ? `[${sessionId}]` : "[no-session]";
+      console[level](prefix, ...args);
+    };
+
     ws.onmessage = async (event) => {
       // Handle binary TTS audio frames → pipe directly to Rust native audio
       if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
@@ -339,7 +470,15 @@ export function useVocoSocket() {
       try {
         const msg = JSON.parse(event.data);
 
-        if (msg.type === "transcript") {
+        if (msg.type === "session_init") {
+          setSessionId(msg.session_id ?? null);
+          console.log(`[VocoSocket] Session initialized: ${msg.session_id}`);
+        } else if (msg.type === "error") {
+          const errPayload = { code: msg.code ?? "UNKNOWN", message: msg.message ?? "Unknown error", recoverable: msg.recoverable ?? true };
+          setLastError(errPayload);
+          toast({ title: errPayload.code, description: errPayload.message, variant: "destructive" });
+          console.error(`[VocoSocket] Error: ${errPayload.code} — ${errPayload.message}`);
+        } else if (msg.type === "transcript") {
           setLiveTranscript(msg.text ?? "");
         } else if (msg.type === "control") {
           if (msg.action === "halt_audio_playback") {
@@ -458,6 +597,12 @@ export function useVocoSocket() {
         } else if (msg.jsonrpc === "2.0" && msg.method) {
           if (msg.method === "local/search_project") {
             await handleLocalSearch(msg);
+          } else if (msg.method === "local/read_file") {
+            await handleReadFile(msg);
+          } else if (msg.method === "local/list_directory") {
+            await handleListDirectory(msg);
+          } else if (msg.method === "local/glob_find") {
+            await handleGlobFind(msg);
           } else if (msg.method === "local/execute_command") {
             await handleExecuteCommand(msg);
           } else if (msg.method === "local/write_file") {
@@ -493,7 +638,7 @@ export function useVocoSocket() {
     };
 
     wsRef.current = ws;
-  }, [disconnect, playNativeAudio, haltNativeAudio, handleLocalSearch, handleExecuteCommand, handleWriteFile, handleWebDiscovery]);
+  }, [disconnect, playNativeAudio, haltNativeAudio, handleLocalSearch, handleReadFile, handleListDirectory, handleGlobFind, handleExecuteCommand, handleWriteFile, handleWebDiscovery]);
 
   useEffect(() => {
     return () => {
@@ -523,5 +668,7 @@ export function useVocoSocket() {
     sandboxRefreshKey,
     setSandboxUrl,
     liveTranscript,
+    sessionId,
+    lastError,
   };
 }

@@ -1,5 +1,8 @@
 """LangGraph StateGraph definition for the Voco cognitive engine."""
 
+from __future__ import annotations
+
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
@@ -49,7 +52,21 @@ builder.add_edge("mcp_gateway_node", END)
 builder.add_edge("proposal_review_node", "orchestrator_node")
 builder.add_edge("command_review_node", "orchestrator_node")
 
-graph = builder.compile(
-    checkpointer=InMemorySaver(),
-    interrupt_before=["proposal_review_node", "command_review_node"],
-)
+def compile_graph(checkpointer: BaseCheckpointSaver | None = None):
+    """Compile the Voco StateGraph with the given checkpointer.
+
+    If *checkpointer* is ``None``, falls back to ``InMemorySaver()``.
+    This factory allows ``main.py`` to supply a per-session
+    ``AsyncSqliteSaver`` for deterministic replay (Issue #2).
+    """
+    return builder.compile(
+        checkpointer=checkpointer or InMemorySaver(),
+        interrupt_before=["proposal_review_node", "command_review_node"],
+    )
+
+
+# NOTE: interrupt_before is the legacy HITL pattern (still functional).
+# The modern LangGraph approach uses interrupt() inside nodes + Command(resume=value).
+# Migration to modern pattern is tracked but deferred — current approach works correctly
+# with InMemorySaver. See: https://docs.langchain.com/oss/python/langgraph/interrupts
+graph = compile_graph()

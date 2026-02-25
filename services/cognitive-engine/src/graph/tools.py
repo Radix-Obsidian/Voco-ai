@@ -17,7 +17,13 @@ mcp_registry = UniversalMCPRegistry()
 
 
 @tool
-def search_codebase(pattern: str, project_path: str) -> dict:
+def search_codebase(
+    pattern: str,
+    project_path: str,
+    file_glob: str = "",
+    max_results: int = 50,
+    context_lines: int = 0,
+) -> dict:
     """Search for code patterns in the active project using ripgrep.
 
     Use this when the user asks to find code, locate a function, discover
@@ -26,19 +32,29 @@ def search_codebase(pattern: str, project_path: str) -> dict:
     Args:
         pattern: Regex or literal string to search for (passed to rg).
         project_path: Absolute path to the project directory to search.
+        file_glob: Only search files matching this glob (e.g. "*.ts").
+        max_results: Cap output to this many matches (default 50).
+        context_lines: Lines of context around each match (default 0).
 
     Returns:
         A dict encoding the JSON-RPC 2.0 request to dispatch to Tauri.
         The caller (mcp_gateway_node) is responsible for sending this over
         the WebSocket and awaiting the result.
     """
+    params: dict = {
+        "pattern": pattern,
+        "project_path": project_path,
+    }
+    if file_glob:
+        params["file_glob"] = file_glob
+    if max_results != 50:
+        params["max_count"] = max_results
+    if context_lines > 0:
+        params["context_lines"] = context_lines
     return {
         "jsonrpc": "2.0",
         "method": "search_project",
-        "params": {
-            "pattern": pattern,
-            "project_path": project_path,
-        },
+        "params": params,
     }
 
 
@@ -280,6 +296,82 @@ def update_sandbox_preview(html_code: str) -> dict:
 
 
 @tool
+def read_file(file_path: str, project_path: str, start_line: int = 0, end_line: int = 0) -> dict:
+    """Read the contents of a file. Use after grep to inspect matching files.
+
+    Args:
+        file_path: Absolute path to the file to read.
+        project_path: Absolute path to the project root (for security validation).
+        start_line: 1-indexed start line (0 = from beginning).
+        end_line: 1-indexed end line (0 = to end of file).
+
+    Returns:
+        A dict encoding the JSON-RPC 2.0 request to dispatch to Tauri.
+    """
+    params: dict = {
+        "file_path": file_path,
+        "project_root": project_path,
+    }
+    if start_line > 0:
+        params["start_line"] = start_line
+    if end_line > 0:
+        params["end_line"] = end_line
+    return {
+        "jsonrpc": "2.0",
+        "method": "local/read_file",
+        "params": params,
+    }
+
+
+@tool
+def list_directory(path: str, project_path: str, max_depth: int = 3) -> dict:
+    """List files and directories. Use to explore project structure.
+
+    Args:
+        path: Absolute path to the directory to list.
+        project_path: Absolute path to the project root (for security validation).
+        max_depth: Maximum directory depth to recurse (default 3).
+
+    Returns:
+        A dict encoding the JSON-RPC 2.0 request to dispatch to Tauri.
+    """
+    return {
+        "jsonrpc": "2.0",
+        "method": "local/list_directory",
+        "params": {
+            "dir_path": path,
+            "project_root": project_path,
+            "max_depth": max_depth,
+        },
+    }
+
+
+@tool
+def glob_find(pattern: str, project_path: str, file_type: str = "file", max_results: int = 50) -> dict:
+    """Find files by name pattern. Use to locate specific files in a project.
+
+    Args:
+        pattern: Glob pattern to match (e.g. "*.test.ts", "**/*.rs").
+        project_path: Absolute path to the project directory to search.
+        file_type: Filter by type — "file", "directory", or "any" (default "file").
+        max_results: Maximum number of results to return (default 50).
+
+    Returns:
+        A dict encoding the JSON-RPC 2.0 request to dispatch to Tauri.
+    """
+    return {
+        "jsonrpc": "2.0",
+        "method": "local/glob_find",
+        "params": {
+            "pattern": pattern,
+            "project_path": project_path,
+            "file_type": file_type,
+            "max_results": max_results,
+        },
+    }
+
+
+@tool
 def propose_file_edit(file_path: str, diff: str, description: str) -> dict:
     """Propose editing an existing file in the user's project.
 
@@ -312,6 +404,9 @@ def get_all_tools():
     """
     return [
         search_codebase,
+        read_file,
+        list_directory,
+        glob_find,
         propose_command,
         get_web_search(),
         github_read_issue,

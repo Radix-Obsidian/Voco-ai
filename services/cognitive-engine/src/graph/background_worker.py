@@ -23,6 +23,7 @@ class BackgroundJobQueue:
 
     def __init__(self) -> None:
         self._tasks: dict[str, asyncio.Task] = {}
+        self._timeout_count: int = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -57,6 +58,11 @@ class BackgroundJobQueue:
         """Return the number of currently running background jobs."""
         return len(self._tasks)
 
+    @property
+    def timeout_count(self) -> int:
+        """Return the total number of jobs that ended with a timeout."""
+        return self._timeout_count
+
     def cancel_all(self) -> None:
         """Cancel every pending background job (e.g. on session shutdown)."""
         for task in list(self._tasks.values()):
@@ -76,8 +82,11 @@ class BackgroundJobQueue:
         """Internal runner — always fires *on_complete*, even on failure."""
         try:
             result = await coro
+            result_str = str(result)
+            if "timed out" in result_str.lower():
+                self._timeout_count += 1
             logger.info("[BackgroundQueue] Job %s completed successfully.", job_id)
-            await on_complete(job_id, str(result))
+            await on_complete(job_id, result_str)
         except asyncio.CancelledError:
             logger.warning("[BackgroundQueue] Job %s was cancelled.", job_id)
             await on_complete(job_id, f"Job {job_id} was cancelled before completion.")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 
@@ -10,6 +11,8 @@ from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 from .state import VocoState
 from .tools import get_all_tools
+from .token_guard import trim_messages_to_budget
+from .turn_archive import archive_turn
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +89,10 @@ _SYSTEM_PROMPT = (
     "8. scan_vulnerabilities — scan the project for exposed secrets and vulnerable dependencies.\n"
     "9. generate_and_preview_mvp — instantly generate a complete web app and serve it in the Live Sandbox "
     "preview visible on the right side of the screen. PRIMARY tool for any app/UI building request.\n"
-    "10. update_sandbox_preview — update the current sandbox with revised HTML for iterative edits.\n\n"
+    "10. update_sandbox_preview — update the current sandbox with revised HTML for iterative edits.\n"
+    "11. read_file — read the contents of a file by path, optionally with a line range. Use after grep to inspect matches.\n"
+    "12. list_directory — list files and directories in a path with configurable depth. Use to explore project structure.\n"
+    "13. glob_find — find files by name pattern (e.g. '*.test.ts'). Use to locate specific files in a project.\n\n"
     "Non-Coder MVP Builder Mode (CRITICAL):\n"
     "- When any user asks you to build, create, prototype, or preview ANY app, website, dashboard, "
     "tool, landing page, or UI: call generate_and_preview_mvp IMMEDIATELY.\n"
@@ -256,10 +262,24 @@ async def orchestrator_node(state: VocoState) -> dict:
     focused = state.get("focused_context", "")
     system_prompt = f"{focused}\n\n{_SYSTEM_PROMPT}" if focused else _SYSTEM_PROMPT
 
+    # Prompt hash + model ID for observability (Issue #7)
+    prompt_hash = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()[:12]
+    model_id = "claude-sonnet-4-5-20250929" if route == "sonnet" else "claude-haiku-4-5-20251001"
+    prev_meta = state.get("turn_metadata") or {}
+    turn_number = prev_meta.get("turn_number", 0) + 1
+    logger.info("[Orchestrator] prompt_hash=%s model=%s turn=%d", prompt_hash, model_id, turn_number)
+
     model = _get_sonnet() if route == "sonnet" else _get_haiku()
 
+    # Token budget guard — trim oldest messages if context would overflow (Issue #3)
+    trimmed_messages = trim_messages_to_budget(
+        system_prompt=system_prompt,
+        messages=state["messages"],
+        model=model_id,
+    )
+
     response: AIMessage = await model.ainvoke(
-        [SystemMessage(content=system_prompt), *state["messages"]]
+        [SystemMessage(content=system_prompt), *trimmed_messages]
     )
 
     logger.info(
@@ -268,9 +288,29 @@ async def orchestrator_node(state: VocoState) -> dict:
         response.content,
     )
 
+    # Archive full turn for replay/debugging (Issue #7)
+    config = state.get("configurable", {})
+    session_id = config.get("thread_id", "unknown")
+    try:
+        archive_turn(
+            session_id=session_id,
+            turn_number=turn_number,
+            system_prompt=system_prompt,
+            model_name=model_id,
+            messages=state["messages"],
+            tool_calls=response.tool_calls if response.tool_calls else None,
+        )
+    except Exception as arc_exc:
+        logger.warning("[Orchestrator] Turn archive failed: %s", arc_exc)
+
     updates: dict = {
         "messages": [response],
         "barge_in_detected": False,
+        "turn_metadata": {
+            "prompt_hash": prompt_hash,
+            "model_id": model_id,
+            "turn_number": turn_number,
+        },
     }
 
     if response.tool_calls:

@@ -150,7 +150,7 @@ const AppPage = () => {
   // Send auth session to Python backend whenever WS connects or session changes.
   useEffect(() => {
     if (isConnected && session?.access_token && session.user?.id) {
-      sendAuthSync(session.access_token, session.user.id);
+      sendAuthSync(session.access_token, session.user.id, session.refresh_token);
     }
   }, [isConnected, session, sendAuthSync]);
 

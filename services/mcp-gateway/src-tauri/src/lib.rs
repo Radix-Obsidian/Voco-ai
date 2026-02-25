@@ -20,6 +20,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::search_project,
+            commands::read_file,
+            commands::list_directory,
+            commands::glob_find,
             commands::write_file,
             commands::execute_command,
             commands::sync_ide_config,

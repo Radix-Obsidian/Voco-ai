@@ -6,7 +6,11 @@
     },
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "./"]
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"]
+    },
+    "synapse": {
+      "command": "binaries/synapse-mcp",
+      "args": []
     }
   }
 }

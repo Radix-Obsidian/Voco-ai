@@ -29,7 +29,7 @@ class CartesiaTTS:
     """
 
     WS_URL = "wss://api.cartesia.ai/tts/websocket"
-    API_VERSION = "2024-06-10"
+    API_VERSION = "2025-04-16"
 
     def __init__(
         self,
@@ -66,7 +66,7 @@ class CartesiaTTS:
 
         request_id = str(uuid.uuid4())
         payload = json.dumps({
-            "model_id": "sonic-english",
+            "model_id": "sonic-3",
             "transcript": text,
             "voice": {
                 "mode": "id",
@@ -87,25 +87,29 @@ class CartesiaTTS:
                 logger.info("[TTS] Synthesizing: %.80s...", text)
 
                 async for raw in ws:
-                    # Binary frame = raw PCM audio
+                    # Cartesia sends JSON text frames per official docs.
+                    # Binary frames are also accepted as a fallback.
                     if isinstance(raw, bytes):
                         yield raw
                         continue
 
-                    # Text frame = JSON control message
                     try:
                         msg = json.loads(raw)
                     except json.JSONDecodeError:
                         continue
 
                     msg_type = msg.get("type", "")
-                    if msg_type == "done":
+                    if msg_type == "chunk" and "data" in msg:
+                        # Official format: {"type": "chunk", "data": "<base64>"}
+                        yield base64.b64decode(msg["data"])
+                    elif msg_type == "done":
                         logger.debug("[TTS] Stream complete for request %s", request_id)
                         break
                     elif msg_type == "error":
-                        logger.error("[TTS] Cartesia error: %s", msg)
+                        logger.error("[TTS] Cartesia error: %s", msg.get("error", msg))
                         break
                     elif "data" in msg:
+                        # Legacy fallback: base64 data without type field
                         yield base64.b64decode(msg["data"])
 
         except websockets.exceptions.InvalidStatusCode as exc:

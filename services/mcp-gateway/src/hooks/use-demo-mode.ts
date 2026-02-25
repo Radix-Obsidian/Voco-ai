@@ -17,9 +17,20 @@ import {
   SCENE3_LEDGER_STAGES,
   SCENE3_COMMAND,
   SCENE3_TERMINAL_STAGES,
+  SCENE4_TRANSCRIPT,
+  SCENE4_UPDATE_TRANSCRIPT,
+  SCENE4_LEDGER_STAGES,
+  SCENE4_SANDBOX_HTML,
+  SCENE4_UPDATED_HTML,
+  SCENE5_TRANSCRIPT,
+  SCENE5_LEDGER_STAGES,
+  SCENE5_TERMINAL_STAGES,
+  SCENE6_TRANSCRIPT,
+  SCENE6_LEDGER_STAGES,
+  SCENE6_TERMINAL_STAGES,
 } from "@/data/demo-script";
 
-type DemoScene = 1 | 2 | 3;
+type DemoScene = 1 | 2 | 3 | 4 | 5 | 6;
 
 interface DemoState {
   isConnected: boolean;
@@ -32,6 +43,8 @@ interface DemoState {
   sandboxUrl: string | null;
   sandboxRefreshKey: number;
   liveTranscript: string;
+  sessionId: string | null;
+  lastError: { code: string; message: string; recoverable: boolean } | null;
 }
 
 /**
@@ -51,6 +64,8 @@ export function useDemoMode() {
     sandboxUrl: null,
     sandboxRefreshKey: 0,
     liveTranscript: "",
+    sessionId: "demo-session-001",
+    lastError: null,
   });
 
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -220,12 +235,185 @@ export function useDemoMode() {
       }));
     }, 10000);
 
-    // Clear and loop back to scene 1
+    // Clear and advance to scene 4
     schedule(() => {
       setState((s) => ({ ...s, ledgerState: null, terminalOutput: null }));
     }, 14000);
 
-    schedule(() => setScene(1), 15000);
+    schedule(() => setScene(4), 15000);
+  }, [typeTranscript, schedule]);
+
+  // ── Scene 4: MVP Builder → Live Sandbox ──
+  const runScene4 = useCallback(() => {
+    setState((s) => ({
+      ...s,
+      terminalOutput: null,
+      proposals: [],
+      commandProposals: [],
+      ledgerState: null,
+      sandboxUrl: null,
+      liveTranscript: "",
+    }));
+
+    typeTranscript(SCENE4_TRANSCRIPT, 500, () => {
+      setState((s) => ({ ...s, ledgerState: SCENE4_LEDGER_STAGES[0], liveTranscript: "" }));
+    });
+
+    // Generation complete
+    schedule(() => {
+      setState((s) => ({ ...s, ledgerState: SCENE4_LEDGER_STAGES[1] }));
+    }, 4500);
+
+    // Sandbox goes live
+    schedule(() => {
+      setState((s) => ({
+        ...s,
+        ledgerState: SCENE4_LEDGER_STAGES[2],
+        sandboxUrl: "http://localhost:8001/sandbox",
+        sandboxRefreshKey: s.sandboxRefreshKey + 1,
+      }));
+    }, 6000);
+
+    // Follow-up: type update transcript
+    schedule(() => {
+      typeTranscript(SCENE4_UPDATE_TRANSCRIPT, 0, () => {
+        setState((s) => ({
+          ...s,
+          liveTranscript: "",
+          sandboxRefreshKey: s.sandboxRefreshKey + 1,
+        }));
+      });
+    }, 10000);
+
+    // Clear and advance to scene 5
+    schedule(() => {
+      setState((s) => ({ ...s, ledgerState: null }));
+    }, 15000);
+
+    schedule(() => setScene(5), 16000);
+  }, [typeTranscript, schedule]);
+
+  // ── Scene 5: YouTube Video Analysis (Synapse MCP) ──
+  const runScene5 = useCallback(() => {
+    setState((s) => ({
+      ...s,
+      terminalOutput: null,
+      proposals: [],
+      commandProposals: [],
+      ledgerState: null,
+      sandboxUrl: null,
+      liveTranscript: "",
+    }));
+
+    typeTranscript(SCENE5_TRANSCRIPT, 500, () => {
+      setState((s) => ({ ...s, ledgerState: SCENE5_LEDGER_STAGES[0], liveTranscript: "" }));
+    });
+
+    // Downloading — terminal stage 1
+    schedule(() => {
+      setState((s) => ({
+        ...s,
+        terminalOutput: {
+          command: "$ synapse analyze_video",
+          output: SCENE5_TERMINAL_STAGES[0],
+          isLoading: true,
+          scope: "local",
+        },
+      }));
+    }, 5000);
+
+    // Upload + analyze — terminal stage 2
+    schedule(() => {
+      setState((s) => ({
+        ...s,
+        ledgerState: SCENE5_LEDGER_STAGES[1],
+        terminalOutput: {
+          command: "$ synapse analyze_video",
+          output: SCENE5_TERMINAL_STAGES[1],
+          isLoading: true,
+          scope: "local",
+        },
+      }));
+    }, 8000);
+
+    // Results — terminal stage 3
+    schedule(() => {
+      setState((s) => ({
+        ...s,
+        ledgerState: SCENE5_LEDGER_STAGES[2],
+        terminalOutput: {
+          command: "$ synapse analyze_video",
+          output: SCENE5_TERMINAL_STAGES[2],
+          isLoading: false,
+          scope: "local",
+        },
+      }));
+    }, 12000);
+
+    // Clear and advance to scene 6
+    schedule(() => {
+      setState((s) => ({ ...s, ledgerState: null, terminalOutput: null }));
+    }, 18000);
+
+    schedule(() => setScene(6), 19000);
+  }, [typeTranscript, schedule]);
+
+  // ── Scene 6: Deep Codebase Exploration (All 4 Search Primitives) ──
+  const runScene6 = useCallback(() => {
+    setState((s) => ({
+      ...s,
+      terminalOutput: null,
+      proposals: [],
+      commandProposals: [],
+      ledgerState: null,
+      sandboxUrl: null,
+      liveTranscript: "",
+    }));
+
+    typeTranscript(SCENE6_TRANSCRIPT, 500, () => {
+      setState((s) => ({ ...s, ledgerState: SCENE6_LEDGER_STAGES[0], liveTranscript: "" }));
+    });
+
+    // List Directory — terminal stage 1
+    schedule(() => {
+      setState((s) => ({
+        ...s,
+        terminalOutput: SCENE6_TERMINAL_STAGES[0],
+      }));
+    }, 4000);
+
+    // Glob Find — ledger stage 2 + terminal stage 2
+    schedule(() => {
+      setState((s) => ({
+        ...s,
+        ledgerState: SCENE6_LEDGER_STAGES[1],
+        terminalOutput: SCENE6_TERMINAL_STAGES[1],
+      }));
+    }, 7500);
+
+    // Read File — ledger stage 3 + terminal stage 3
+    schedule(() => {
+      setState((s) => ({
+        ...s,
+        ledgerState: SCENE6_LEDGER_STAGES[2],
+        terminalOutput: SCENE6_TERMINAL_STAGES[2],
+      }));
+    }, 11000);
+
+    // All completed
+    schedule(() => {
+      setState((s) => ({
+        ...s,
+        ledgerState: SCENE6_LEDGER_STAGES[3],
+      }));
+    }, 14000);
+
+    // Clear and loop back to scene 1
+    schedule(() => {
+      setState((s) => ({ ...s, ledgerState: null, terminalOutput: null }));
+    }, 17000);
+
+    schedule(() => setScene(1), 18000);
   }, [typeTranscript, schedule]);
 
   // Run the current scene
@@ -234,8 +422,11 @@ export function useDemoMode() {
     if (scene === 1) runScene1();
     else if (scene === 2) runScene2();
     else if (scene === 3) runScene3();
+    else if (scene === 4) runScene4();
+    else if (scene === 5) runScene5();
+    else if (scene === 6) runScene6();
     return clearTimers;
-  }, [scene, runScene1, runScene2, runScene3, clearTimers]);
+  }, [scene, runScene1, runScene2, runScene3, runScene4, runScene5, runScene6, clearTimers]);
 
   // No-op functions to match useVocoSocket interface
   const noop = useCallback(() => {}, []);
@@ -259,7 +450,9 @@ export function useDemoMode() {
     sandboxUrl: state.sandboxUrl,
     sandboxRefreshKey: state.sandboxRefreshKey,
     setSandboxUrl: (v: string | null) => setState((s) => ({ ...s, sandboxUrl: v })),
-    sendAuthSync: noop as unknown as (token: string, uid: string) => void,
+    sendAuthSync: noop as unknown as (token: string, uid: string, refreshToken?: string) => void,
     liveTranscript: state.liveTranscript,
+    sessionId: state.sessionId,
+    lastError: state.lastError,
   };
 }

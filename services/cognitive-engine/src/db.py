@@ -29,13 +29,18 @@ _client: "Client | None" = None
 _auth_uid: str = "local"
 
 
-def set_auth_jwt(access_token: str, uid: str) -> None:
+def set_auth_jwt(access_token: str, uid: str, refresh_token: str = "") -> None:
     """Re-initialise the Supabase client with the user's JWT for RLS.
 
     Called by ``main.py`` when an ``auth_sync`` message arrives from the
     frontend.  The client is created with the **anon key** and then the
     session is overridden with the user's access token so that Postgres
     RLS policies see ``auth.uid()`` correctly.
+
+    Per official Supabase docs, ``set_session`` requires both access_token
+    and refresh_token. Without a valid refresh_token, the session cannot
+    be refreshed and will expire silently.
+    See: https://supabase.com/docs/reference/python/auth-setsession
     """
     global _client, _auth_uid
     _auth_uid = uid or "local"
@@ -56,12 +61,16 @@ def set_auth_jwt(access_token: str, uid: str) -> None:
         _client = None
         return
 
+    if not refresh_token:
+        logger.warning("[Ledger] No refresh_token provided — session cannot auto-refresh.")
+
     try:
         from supabase import create_client
 
         client = create_client(url, anon_key)
         # Override the session with the user's JWT so RLS policies apply.
-        client.auth.set_session(access_token, "")
+        # Both tokens required per Supabase official docs.
+        client.auth.set_session(access_token, refresh_token or access_token)
         _client = client
         logger.info("[Ledger] Supabase client initialised with user JWT (uid=%s).", uid)
     except Exception as exc:
