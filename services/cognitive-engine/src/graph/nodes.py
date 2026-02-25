@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from .state import VocoState
 from .tools import get_all_tools
 from .token_guard import trim_messages_to_budget
+from .session_memory import load_session_history, save_session_entry
 from .turn_archive import archive_turn
 
 logger = logging.getLogger(__name__)
@@ -260,7 +261,10 @@ async def orchestrator_node(state: VocoState) -> dict:
     logger.info("[Orchestrator 🧠] Model=%s | User: %s", route.upper(), last_message.content)
 
     focused = state.get("focused_context", "")
-    system_prompt = f"{focused}\n\n{_SYSTEM_PROMPT}" if focused else _SYSTEM_PROMPT
+    project_path = state.get("active_project_path", "")
+    session_history = load_session_history(project_path)
+    parts = [p for p in (focused, session_history, _SYSTEM_PROMPT) if p]
+    system_prompt = "\n\n".join(parts)
 
     # Prompt hash + model ID for observability (Issue #7)
     prompt_hash = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()[:12]
@@ -302,6 +306,29 @@ async def orchestrator_node(state: VocoState) -> dict:
         )
     except Exception as arc_exc:
         logger.warning("[Orchestrator] Turn archive failed: %s", arc_exc)
+
+    # --- Session memory: persist this turn ---
+    try:
+        transcript = last_message.content if hasattr(last_message, "content") else str(last_message)
+        action_names = [tc["name"] for tc in (response.tool_calls or [])]
+        file_refs: list[str] = []
+        for tc in (response.tool_calls or []):
+            for key in ("file_path", "project_path", "path"):
+                val = tc.get("args", {}).get(key)
+                if val:
+                    file_refs.append(val)
+        summary_text = (response.content or "")[:200]
+        save_session_entry(
+            project_path=project_path,
+            transcript=transcript,
+            actions=action_names,
+            files=file_refs,
+            summary=summary_text,
+            session_id=session_id,
+            model=model_id,
+        )
+    except Exception as mem_exc:
+        logger.warning("[Orchestrator] Session memory save failed: %s", mem_exc)
 
     updates: dict = {
         "messages": [response],
