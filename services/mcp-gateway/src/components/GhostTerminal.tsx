@@ -26,7 +26,7 @@ export function GhostTerminal({ output, onClose }: GhostTerminalProps) {
   };
 
   return (
-    <div className="fixed bottom-4 right-4 w-[600px] max-h-[400px] bg-zinc-950/95 backdrop-blur-xl border border-zinc-800 rounded-lg shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 fade-in duration-300">
+    <div className="fixed bottom-4 right-4 w-[420px] max-h-[300px] bg-zinc-950/95 backdrop-blur-xl border border-zinc-800 rounded-lg shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 fade-in duration-300">
       <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800 bg-zinc-900/50">
         <div className="flex items-center gap-2">
           <div className="flex gap-1.5">
@@ -66,15 +66,15 @@ export function GhostTerminal({ output, onClose }: GhostTerminalProps) {
         </div>
       </div>
 
-      <div className="px-4 py-2 font-mono text-sm">
+      <div className="px-3 py-1.5 font-mono text-xs">
         <div className="flex items-center gap-2 text-zinc-300">
           <span className="text-voco-cyan">$</span>
           <span className="text-zinc-400">{output.command}</span>
         </div>
       </div>
 
-      <ScrollArea className="h-[280px] px-4 pb-4">
-        <div ref={scrollRef} className="font-mono text-sm">
+      <ScrollArea className="h-[180px] px-3 pb-3">
+        <div ref={scrollRef} className="font-mono text-xs">
           {output.isLoading && (
             <div className="flex items-center gap-2 text-zinc-500 py-2">
               <div className="flex gap-1">
@@ -93,7 +93,7 @@ export function GhostTerminal({ output, onClose }: GhostTerminalProps) {
           )}
 
           {output.output && (
-            <pre className="text-zinc-300 py-2 whitespace-pre-wrap leading-relaxed">
+            <pre className="text-zinc-300 py-1 whitespace-pre-wrap leading-snug text-xs">
               {output.output}
             </pre>
           )}

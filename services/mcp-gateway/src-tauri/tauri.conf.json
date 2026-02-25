@@ -5,7 +5,7 @@
   "identifier": "com.voco.mcp-gateway",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:8080",
+    "devUrl": "http://localhost:8080?demo=true",
     "beforeDevCommand": "npm run dev:frontend",
     "beforeBuildCommand": "npm run build"
   },
@@ -39,8 +39,7 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/rg",
-      "binaries/synapse-mcp"
+      "binaries/rg"
     ],
     "createUpdaterArtifacts": true
   },

@@ -115,7 +115,7 @@ describe("WebSocket message routing logic", () => {
         type: "auth_sync",
         token: "tok",
         uid: "uid",
-        refresh_token: undefined || "",
+        refresh_token: "" as string,
       };
 
       expect(payload.refresh_token).toBe("");

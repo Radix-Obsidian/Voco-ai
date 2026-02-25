@@ -6,6 +6,72 @@ import type {
 } from "@/hooks/use-voco-socket";
 
 // ---------------------------------------------------------------------------
+// Scene 0 — "Connect Existing Repo" → Project scan → File tree
+// ---------------------------------------------------------------------------
+
+export const SCENE0_TRANSCRIPT = "Connect my e-commerce project at projects slash shopwave";
+
+export const SCENE0_LEDGER_STAGES: LedgerState[] = [
+  {
+    domain: "project",
+    nodes: [
+      { id: "s0-1", iconType: "FolderSync", title: "Connect", description: "Scanning project…", status: "active" },
+      { id: "s0-2", iconType: "FileCode2", title: "Index", description: "Awaiting", status: "pending" },
+      { id: "s0-3", iconType: "Database", title: "Ready", description: "Awaiting", status: "pending" },
+    ],
+  },
+  {
+    domain: "project",
+    nodes: [
+      { id: "s0-1", iconType: "FolderSync", title: "Connect", description: "142 files found", status: "completed" },
+      { id: "s0-2", iconType: "FileCode2", title: "Index", description: "Building AST map…", status: "active" },
+      { id: "s0-3", iconType: "Database", title: "Ready", description: "Awaiting", status: "pending" },
+    ],
+  },
+  {
+    domain: "project",
+    nodes: [
+      { id: "s0-1", iconType: "FolderSync", title: "Connect", description: "142 files found", status: "completed" },
+      { id: "s0-2", iconType: "FileCode2", title: "Index", description: "AST indexed", status: "completed" },
+      { id: "s0-3", iconType: "Database", title: "Ready", description: "Project connected", status: "completed" },
+    ],
+  },
+];
+
+export const SCENE0_TERMINAL: TerminalOutput = {
+  command: "$ voco connect ~/projects/shopwave",
+  output: `Scanning ~/projects/shopwave …
+
+shopwave/
+├── src/
+│   ├── app/
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   └── (shop)/
+│   │       ├── products/page.tsx
+│   │       ├── cart/page.tsx
+│   │       └── checkout/page.tsx
+│   ├── components/
+│   │   ├── ProductCard.tsx
+│   │   ├── CartDrawer.tsx
+│   │   ├── Header.tsx
+│   │   └── ui/ (12 files)
+│   ├── lib/
+│   │   ├── stripe.ts
+│   │   ├── db.ts
+│   │   └── auth.ts
+│   └── middleware.ts
+├── prisma/
+│   └── schema.prisma
+├── package.json  (next 14.2, prisma, stripe, tailwind)
+├── tsconfig.json
+└── .env.local
+
+142 files · 18 components · 3 API routes · Prisma + Stripe detected
+✓ Project indexed and ready`,
+};
+
+// ---------------------------------------------------------------------------
 // Scene 1 — Voice Search → ripgrep results
 // ---------------------------------------------------------------------------
 
@@ -204,9 +270,9 @@ Ran all test suites matching /auth/i.`,
 // Scene 4 — "Build Me an App" → MVP Builder → Live Sandbox
 // ---------------------------------------------------------------------------
 
-export const SCENE4_TRANSCRIPT = "Build me a task tracker app with dark mode";
+export const SCENE4_TRANSCRIPT = "Build me an AI chat interface with streaming responses";
 
-export const SCENE4_UPDATE_TRANSCRIPT = "Add a priority column with color tags";
+export const SCENE4_UPDATE_TRANSCRIPT = "Add a conversation history sidebar and dark light toggle";
 
 export const SCENE4_LEDGER_STAGES: LedgerState[] = [
   {
@@ -238,66 +304,214 @@ export const SCENE4_LEDGER_STAGES: LedgerState[] = [
 export const SCENE4_SANDBOX_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Task Tracker</title>
-<script src="https://cdn.tailwindcss.com"></script></head>
-<body class="bg-gray-950 text-white min-h-screen p-8">
-<div class="max-w-2xl mx-auto space-y-6">
-  <h1 class="text-3xl font-bold">Task Tracker</h1>
-  <div class="bg-white/5 rounded-2xl ring-1 ring-white/10 p-6 space-y-4">
-    <div class="flex gap-3">
-      <input type="text" placeholder="Add a task…" class="flex-1 bg-white/5 rounded-xl px-4 py-2 text-sm ring-1 ring-white/10 focus:ring-emerald-500 outline-none" />
-      <button class="bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl px-4 py-2 text-sm font-medium transition">Add</button>
-    </div>
-    <ul class="space-y-2">
-      <li class="flex items-center gap-3 bg-white/5 rounded-xl px-4 py-3 ring-1 ring-white/10">
-        <input type="checkbox" class="accent-emerald-500" />
-        <span>Design landing page mockup</span>
-      </li>
-      <li class="flex items-center gap-3 bg-white/5 rounded-xl px-4 py-3 ring-1 ring-white/10">
-        <input type="checkbox" class="accent-emerald-500" />
-        <span>Set up CI/CD pipeline</span>
-      </li>
-      <li class="flex items-center gap-3 bg-white/5 rounded-xl px-4 py-3 ring-1 ring-white/10 opacity-50 line-through">
-        <input type="checkbox" checked class="accent-emerald-500" />
-        <span>Initialize project repo</span>
-      </li>
-    </ul>
+<title>NeuralChat</title>
+<script src="https://cdn.tailwindcss.com"><\/script>
+<style>
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+  .cursor-blink::after { content:'\\25AE'; animation:blink 0.7s infinite; margin-left:2px; }
+  ::-webkit-scrollbar{width:6px} ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
+<\/style></head>
+<body class="bg-gray-950 text-white h-screen flex flex-col overflow-hidden">
+<!-- Header -->
+<div class="flex items-center justify-between px-5 py-3 border-b border-white/10">
+  <div class="flex items-center gap-3">
+    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-cyan-400 flex items-center justify-center text-sm font-bold">N<\/div>
+    <span class="font-semibold text-sm">NeuralChat<\/span>
+  </div>
+  <select id="modelPicker" class="bg-white/5 text-xs text-zinc-400 rounded-lg px-3 py-1.5 border border-white/10 outline-none cursor-pointer">
+    <option>GPT-4o</option><option>Claude 3.5</option><option>Gemini Pro</option><option>Llama 3.1</option>
+  <\/select>
+</div>
+<!-- Messages -->
+<div id="msgs" class="flex-1 overflow-y-auto px-5 py-4 space-y-4"><\/div>
+<!-- Input -->
+<div class="px-5 py-3 border-t border-white/10">
+  <div class="flex gap-3 items-end">
+    <textarea id="chatInput" rows="1" placeholder="Send a message…"
+      class="flex-1 bg-white/5 rounded-xl px-4 py-2.5 text-sm ring-1 ring-white/10 focus:ring-violet-500 outline-none resize-none max-h-32"><\/textarea>
+    <button id="sendBtn" class="bg-gradient-to-r from-violet-500 to-cyan-400 hover:opacity-90 text-white rounded-xl px-4 py-2.5 text-sm font-medium transition flex-shrink-0">Send<\/button>
   </div>
 </div>
+<script>
+  const msgs = [
+    {role:"assistant",text:"Hello! I'm NeuralChat, your AI assistant. How can I help you today?"},
+    {role:"user",text:"Explain how transformers work in deep learning"},
+    {role:"assistant",text:"Transformers are a neural network architecture introduced in the 2017 paper \\"Attention Is All You Need.\\" They revolutionized NLP by replacing recurrence with **self-attention mechanisms**.\\n\\nKey components:\\n\\n1. **Self-Attention** \u2014 Each token attends to every other token, computing relevance scores\\n2. **Multi-Head Attention** \u2014 Multiple attention heads capture different relationship patterns in parallel\\n3. **Positional Encoding** \u2014 Since there's no recurrence, position information is injected via sinusoidal embeddings\\n4. **Feed-Forward Networks** \u2014 Each layer includes a position-wise FFN for non-linear transformation\\n\\nThe key breakthrough: O(1) sequential operations vs O(n) for RNNs, enabling massive parallelization during training."},
+  ];
+  const el = (tag,cls,html) => { const e=document.createElement(tag); if(cls)e.className=cls; if(html)e.innerHTML=html; return e; };
+  function md(t){ return t.replace(/\\*\\*(.+?)\\*\\*/g,'<strong class="text-white">$1<\\/strong>').replace(/\\n/g,'<br>'); }
+  function renderAll(){
+    const c=document.getElementById("msgs"); c.innerHTML="";
+    msgs.forEach(m=>{ c.appendChild(bubble(m)); });
+    c.scrollTop=c.scrollHeight;
+  }
+  function bubble(m){
+    const isUser=m.role==="user";
+    const wrap=el("div","flex gap-3 "+(isUser?"justify-end":""));
+    if(!isUser){
+      const av=el("div","w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 to-cyan-400 flex-shrink-0 flex items-center justify-center text-[10px] font-bold","N");
+      wrap.appendChild(av);
+    }
+    const bub=el("div","max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed "
+      +(isUser?"bg-violet-600/30 text-violet-100 rounded-br-md":"bg-white/5 text-zinc-300 rounded-bl-md ring-1 ring-white/5"),
+      md(m.text));
+    wrap.appendChild(bub);
+    return wrap;
+  }
+  function streamReply(text){
+    const c=document.getElementById("msgs");
+    const wrap=el("div","flex gap-3");
+    const av=el("div","w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 to-cyan-400 flex-shrink-0 flex items-center justify-center text-[10px] font-bold","N");
+    const bub=el("div","max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed bg-white/5 text-zinc-300 rounded-bl-md ring-1 ring-white/5 cursor-blink","");
+    wrap.appendChild(av); wrap.appendChild(bub); c.appendChild(wrap);
+    let i=0;
+    const iv=setInterval(()=>{
+      i++; bub.innerHTML=md(text.slice(0,i));
+      c.scrollTop=c.scrollHeight;
+      if(i>=text.length){ clearInterval(iv); bub.classList.remove("cursor-blink"); msgs.push({role:"assistant",text:text}); }
+    },12);
+  }
+  const replies=["That's a great question! Let me think about that...\\n\\nBased on my analysis, there are several approaches you could take. The most effective would be to start with a clear problem definition, then iterate rapidly with user feedback.\\n\\nWould you like me to go deeper on any specific aspect?","Here's a quick implementation:\\n\\n\`\`\`python\\ndef process(data):\\n    results = [transform(x) for x in data]\\n    return aggregate(results)\\n\`\`\`\\n\\nThis uses list comprehension for clean, readable code. The **transform** and **aggregate** functions handle the heavy lifting."];
+  let ri=0;
+  function send(){
+    const inp=document.getElementById("chatInput");
+    const v=inp.value.trim(); if(!v)return;
+    msgs.push({role:"user",text:v}); inp.value=""; renderAll();
+    setTimeout(()=>{ streamReply(replies[ri%replies.length]); ri++; },600);
+  }
+  document.getElementById("sendBtn").addEventListener("click",send);
+  document.getElementById("chatInput").addEventListener("keydown",(e)=>{ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();} });
+  renderAll();
+<\/script>
 </body></html>`;
 
 export const SCENE4_UPDATED_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Task Tracker</title>
-<script src="https://cdn.tailwindcss.com"></script></head>
-<body class="bg-gray-950 text-white min-h-screen p-8">
-<div class="max-w-2xl mx-auto space-y-6">
-  <h1 class="text-3xl font-bold">Task Tracker</h1>
-  <div class="bg-white/5 rounded-2xl ring-1 ring-white/10 p-6 space-y-4">
-    <div class="flex gap-3">
-      <input type="text" placeholder="Add a task…" class="flex-1 bg-white/5 rounded-xl px-4 py-2 text-sm ring-1 ring-white/10 focus:ring-emerald-500 outline-none" />
-      <button class="bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl px-4 py-2 text-sm font-medium transition">Add</button>
-    </div>
-    <ul class="space-y-2">
-      <li class="flex items-center gap-3 bg-white/5 rounded-xl px-4 py-3 ring-1 ring-white/10">
-        <input type="checkbox" class="accent-emerald-500" />
-        <span class="flex-1">Design landing page mockup</span>
-        <span class="text-xs px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 ring-1 ring-red-500/30">High</span>
-      </li>
-      <li class="flex items-center gap-3 bg-white/5 rounded-xl px-4 py-3 ring-1 ring-white/10">
-        <input type="checkbox" class="accent-emerald-500" />
-        <span class="flex-1">Set up CI/CD pipeline</span>
-        <span class="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 ring-1 ring-amber-500/30">Medium</span>
-      </li>
-      <li class="flex items-center gap-3 bg-white/5 rounded-xl px-4 py-3 ring-1 ring-white/10 opacity-50 line-through">
-        <input type="checkbox" checked class="accent-emerald-500" />
-        <span class="flex-1">Initialize project repo</span>
-        <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30">Low</span>
-      </li>
-    </ul>
+<title>NeuralChat</title>
+<script src="https://cdn.tailwindcss.com"><\/script>
+<style>
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+  .cursor-blink::after { content:'\\25AE'; animation:blink 0.7s infinite; margin-left:2px; }
+  ::-webkit-scrollbar{width:6px} ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#555;border-radius:3px}
+  .light { --bg:#ffffff; --bg2:#f9fafb; --fg:#111827; --fg2:#6b7280; --border:#e5e7eb; --card:#f3f4f6; --accent-from:#7c3aed; --accent-to:#06b6d4; }
+  .dark  { --bg:#030712; --bg2:#0a0a0a; --fg:#f9fafb; --fg2:#9ca3af; --border:rgba(255,255,255,0.1); --card:rgba(255,255,255,0.03); --accent-from:#7c3aed; --accent-to:#06b6d4; }
+  body { background:var(--bg); color:var(--fg); transition:background 0.3s,color 0.3s; }
+  .sb-item { border-color:var(--border); background:var(--card); color:var(--fg2); }
+  .sb-item:hover,.sb-item.active { background:rgba(124,58,237,0.1); color:var(--fg); }
+<\/style></head>
+<body class="dark h-screen flex overflow-hidden">
+<!-- Sidebar -->
+<div id="sidebar" class="w-64 flex-shrink-0 flex flex-col border-r" style="border-color:var(--border);background:var(--bg2)">
+  <div class="p-3 border-b" style="border-color:var(--border)">
+    <button id="newChat" class="w-full text-left text-xs px-3 py-2 rounded-lg sb-item font-medium" style="border:1px solid var(--border)">+ New Chat<\/button>
+  </div>
+  <div id="convList" class="flex-1 overflow-y-auto p-2 space-y-1"><\/div>
+  <div class="p-3 border-t flex items-center justify-between" style="border-color:var(--border)">
+    <span class="text-[10px]" style="color:var(--fg2)">Theme<\/span>
+    <button id="themeBtn" class="text-xs px-2.5 py-1 rounded-lg sb-item" style="border:1px solid var(--border)">Light<\/button>
   </div>
 </div>
+<!-- Main -->
+<div class="flex-1 flex flex-col">
+  <div class="flex items-center justify-between px-5 py-3 border-b" style="border-color:var(--border)">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-cyan-400 flex items-center justify-center text-sm font-bold text-white">N<\/div>
+      <span class="font-semibold text-sm" id="chatTitle">NeuralChat<\/span>
+    </div>
+    <select id="modelPicker" class="text-xs rounded-lg px-3 py-1.5 outline-none cursor-pointer" style="background:var(--card);color:var(--fg2);border:1px solid var(--border)">
+      <option>GPT-4o</option><option>Claude 3.5</option><option>Gemini Pro</option><option>Llama 3.1</option>
+    <\/select>
+  </div>
+  <div id="msgs" class="flex-1 overflow-y-auto px-5 py-4 space-y-4"><\/div>
+  <div class="px-5 py-3 border-t" style="border-color:var(--border)">
+    <div class="flex gap-3 items-end">
+      <textarea id="chatInput" rows="1" placeholder="Send a message…"
+        class="flex-1 rounded-xl px-4 py-2.5 text-sm outline-none resize-none max-h-32" style="background:var(--card);color:var(--fg);border:1px solid var(--border)"><\/textarea>
+      <button id="sendBtn" class="bg-gradient-to-r from-violet-500 to-cyan-400 hover:opacity-90 text-white rounded-xl px-4 py-2.5 text-sm font-medium transition flex-shrink-0">Send<\/button>
+    </div>
+  </div>
+</div>
+<script>
+  const convs=[
+    {id:1,title:"Transformers explained",msgs:[
+      {role:"assistant",text:"Hello! I'm NeuralChat, your AI assistant. How can I help you today?"},
+      {role:"user",text:"Explain how transformers work in deep learning"},
+      {role:"assistant",text:"Transformers are a neural network architecture introduced in the 2017 paper \\"Attention Is All You Need.\\" They revolutionized NLP by replacing recurrence with **self-attention mechanisms**.\\n\\nKey components:\\n\\n1. **Self-Attention** \u2014 Each token attends to every other token\\n2. **Multi-Head Attention** \u2014 Multiple heads capture different patterns\\n3. **Positional Encoding** \u2014 Sinusoidal embeddings inject position info\\n4. **Feed-Forward Networks** \u2014 Position-wise FFN for non-linear transforms\\n\\nThe breakthrough: O(1) sequential ops vs O(n) for RNNs."},
+    ]},
+    {id:2,title:"React optimization",msgs:[
+      {role:"assistant",text:"Hello! What would you like to know?"},
+      {role:"user",text:"How do I optimize React re-renders?"},
+      {role:"assistant",text:"Key strategies:\\n\\n1. **React.memo** \u2014 Wrap pure components\\n2. **useMemo / useCallback** \u2014 Memoize expensive computations and callbacks\\n3. **Key prop** \u2014 Stable keys prevent unnecessary unmount/remount\\n4. **Virtualization** \u2014 Use react-window for long lists\\n5. **Code splitting** \u2014 React.lazy + Suspense"},
+    ]},
+    {id:3,title:"Database indexing",msgs:[
+      {role:"assistant",text:"Hi there! Ask me anything about databases."},
+    ]},
+  ];
+  let activeId=1, isDark=true;
+  const el=(tag,cls,html)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(html)e.innerHTML=html;return e;};
+  function md(t){return t.replace(/\\*\\*(.+?)\\*\\*/g,'<strong style="color:var(--fg)">$1<\\/strong>').replace(/\\n/g,'<br>');}
+  function renderSidebar(){
+    const list=document.getElementById("convList"); list.innerHTML="";
+    convs.forEach(c=>{
+      const btn=el("button","sb-item w-full text-left text-xs px-3 py-2 rounded-lg truncate"+(c.id===activeId?" active":""),c.title);
+      btn.style.cssText="border:none;cursor:pointer";
+      btn.addEventListener("click",()=>{activeId=c.id;renderAll();});
+      list.appendChild(btn);
+    });
+  }
+  function getActive(){return convs.find(c=>c.id===activeId);}
+  function bubble(m){
+    const isUser=m.role==="user";
+    const wrap=el("div","flex gap-3 "+(isUser?"justify-end":""));
+    if(!isUser){const av=el("div","w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 to-cyan-400 flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-white","N");wrap.appendChild(av);}
+    const bub=el("div","max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed "
+      +(isUser?"rounded-br-md":"rounded-bl-md"),
+      md(m.text));
+    bub.style.cssText=isUser?"background:rgba(124,58,237,0.2);color:var(--fg)":"background:var(--card);color:var(--fg2);border:1px solid var(--border)";
+    wrap.appendChild(bub); return wrap;
+  }
+  function renderMsgs(){
+    const conv=getActive(); if(!conv)return;
+    const c=document.getElementById("msgs"); c.innerHTML="";
+    conv.msgs.forEach(m=>c.appendChild(bubble(m)));
+    c.scrollTop=c.scrollHeight;
+    document.getElementById("chatTitle").textContent=conv.title;
+  }
+  function renderAll(){renderSidebar();renderMsgs();}
+  function streamReply(text){
+    const c=document.getElementById("msgs");
+    const wrap=el("div","flex gap-3");
+    const av=el("div","w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 to-cyan-400 flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-white","N");
+    const bub=el("div","max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed cursor-blink","");
+    bub.style.cssText="background:var(--card);color:var(--fg2);border:1px solid var(--border);border-bottom-left-radius:0.375rem";
+    wrap.appendChild(av);wrap.appendChild(bub);c.appendChild(wrap);
+    let i=0;
+    const iv=setInterval(()=>{
+      i++;bub.innerHTML=md(text.slice(0,i));c.scrollTop=c.scrollHeight;
+      if(i>=text.length){clearInterval(iv);bub.classList.remove("cursor-blink");getActive().msgs.push({role:"assistant",text});}
+    },12);
+  }
+  const replies=["Great question! Let me break that down...\\n\\nThe most effective approach combines **incremental delivery** with tight feedback loops. Start small, validate early, and scale what works.\\n\\nWant me to elaborate on any part?","Here's a concise implementation:\\n\\n\`\`\`python\\ndef process(data):\\n    return aggregate([transform(x) for x in data])\\n\`\`\`\\n\\nClean, readable, and the **transform** + **aggregate** pattern handles the complexity."];
+  let ri=0;
+  function send(){
+    const inp=document.getElementById("chatInput");const v=inp.value.trim();if(!v)return;
+    getActive().msgs.push({role:"user",text:v});inp.value="";renderMsgs();
+    setTimeout(()=>{streamReply(replies[ri%replies.length]);ri++;},600);
+  }
+  document.getElementById("sendBtn").addEventListener("click",send);
+  document.getElementById("chatInput").addEventListener("keydown",(e)=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}});
+  document.getElementById("newChat").addEventListener("click",()=>{
+    const id=convs.length+1;convs.unshift({id,title:"New Chat",msgs:[{role:"assistant",text:"Hello! How can I help?"}]});activeId=id;renderAll();
+  });
+  document.getElementById("themeBtn").addEventListener("click",()=>{
+    isDark=!isDark;document.body.className=(isDark?"dark":"light")+" h-screen flex overflow-hidden";
+    document.getElementById("themeBtn").textContent=isDark?"Light":"Dark";
+  });
+  renderAll();
+<\/script>
 </body></html>`;
 
 // ---------------------------------------------------------------------------
@@ -305,7 +519,7 @@ export const SCENE4_UPDATED_HTML = `<!DOCTYPE html>
 // ---------------------------------------------------------------------------
 
 export const SCENE5_TRANSCRIPT =
-  "Analyze this YouTube tutorial and extract the React code — youtube.com/watch?v=demo123";
+  "Analyze this YouTube tutorial and extract the React code — youtube.com/watch?v=bTMPwUgLZf0";
 
 export const SCENE5_LEDGER_STAGES: LedgerState[] = [
   {
@@ -338,11 +552,11 @@ export const SCENE5_LEDGER_STAGES: LedgerState[] = [
 ];
 
 export const SCENE5_TERMINAL_STAGES: string[] = [
-  `[synapse] Downloading video: youtube.com/watch?v=demo123
-[synapse] Format: 720p mp4 (12.4 MB)
+  `[synapse] Downloading video: youtube.com/watch?v=bTMPwUgLZf0
+[synapse] Format: 720p mp4 (48.7 MB)
 [synapse] Progress: ██████████░░░░░░ 62%`,
 
-  `[synapse] Download complete (12.4 MB)
+  `[synapse] Download complete (48.7 MB)
 [synapse] Uploading to Gemini File API...
 [synapse] File state: PROCESSING
 [synapse] Analyzing with gemini-1.5-pro...`,

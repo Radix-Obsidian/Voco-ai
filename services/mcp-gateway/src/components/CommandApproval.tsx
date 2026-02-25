@@ -41,7 +41,7 @@ export function CommandApproval({ commands, onSubmitDecisions }: CommandApproval
   if (!commands.length) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 w-[560px] max-h-[420px] bg-zinc-950/95 backdrop-blur-xl border border-zinc-800 rounded-lg shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 fade-in duration-300">
+    <div className="fixed bottom-4 right-4 w-[420px] max-h-[320px] bg-zinc-950/95 backdrop-blur-xl border border-zinc-800 rounded-lg shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 fade-in duration-300">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800 bg-zinc-900/50">
         <div className="flex items-center gap-2">
@@ -74,7 +74,7 @@ export function CommandApproval({ commands, onSubmitDecisions }: CommandApproval
       </div>
 
       {/* Command Cards */}
-      <div className="p-3 space-y-3 max-h-[320px] overflow-y-auto">
+      <div className="p-3 space-y-3 max-h-[200px] overflow-y-auto">
         {commands.map((c) => {
           const status = getStatus(c.command_id);
           return (

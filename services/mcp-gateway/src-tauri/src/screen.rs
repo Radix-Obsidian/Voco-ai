@@ -9,7 +9,6 @@
 
 use std::{
     collections::VecDeque,
-    io::Cursor,
     sync::{Arc, Mutex, OnceLock},
     thread,
     time::Duration,
@@ -78,17 +77,19 @@ fn capture_one_frame(buffer: &Arc<Mutex<VecDeque<Vec<u8>>>>) {
     let dynamic = image::DynamicImage::ImageRgba8(rgba_image);
     let resized = dynamic.resize(MAX_DIM, MAX_DIM, image::imageops::FilterType::Nearest);
 
-    // Encode to JPEG bytes. DynamicImage::write_to strips alpha for JPEG automatically.
+    // Encode to JPEG bytes using explicit quality via JpegEncoder.
+    let rgb = resized.to_rgb8();
     let mut jpeg_bytes: Vec<u8> = Vec::new();
-    if resized
-        .write_to(&mut Cursor::new(&mut jpeg_bytes), image::ImageFormat::Jpeg)
-        .is_err()
     {
-        return;
+        let mut encoder =
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, JPEG_QUALITY);
+        if encoder
+            .encode(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)
+            .is_err()
+        {
+            return;
+        }
     }
-
-    // Overwrite JPEG quality by re-encoding with the codecs encoder if needed.
-    // (The default write_to JPEG quality is ~75, which is our target — good enough.)
 
     // Push to rolling buffer.
     let mut buf = match buffer.lock() {

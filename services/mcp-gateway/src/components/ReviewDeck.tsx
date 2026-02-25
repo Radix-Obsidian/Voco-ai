@@ -49,7 +49,7 @@ export function ReviewDeck({ proposals, onSubmitDecisions }: ReviewDeckProps) {
   if (!proposals.length) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 w-[640px] max-h-[520px] bg-zinc-950/95 backdrop-blur-xl border border-zinc-800 rounded-lg shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 fade-in duration-300">
+    <div className="fixed bottom-4 right-4 w-[420px] max-h-[360px] bg-zinc-950/95 backdrop-blur-xl border border-zinc-800 rounded-lg shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 fade-in duration-300">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800 bg-zinc-900/50">
         <div className="flex items-center gap-2">
@@ -79,7 +79,7 @@ export function ReviewDeck({ proposals, onSubmitDecisions }: ReviewDeckProps) {
       </div>
 
       {/* Proposal Cards */}
-      <ScrollArea className="max-h-[400px]">
+      <ScrollArea className="max-h-[240px]">
         <div className="p-3 space-y-3">
           {proposals.map((p) => {
             const status = getStatus(p.proposal_id);
@@ -127,7 +127,7 @@ export function ReviewDeck({ proposals, onSubmitDecisions }: ReviewDeckProps) {
                 {/* Code Preview */}
                 {(p.content || p.diff) && (
                   <div className="px-3 pb-2">
-                    <pre className="bg-zinc-950 border border-zinc-800 rounded p-2 text-xs text-zinc-300 font-mono overflow-x-auto max-h-[160px] overflow-y-auto whitespace-pre-wrap">
+                    <pre className="bg-zinc-950 border border-zinc-800 rounded p-2 text-[11px] text-zinc-300 font-mono overflow-x-auto max-h-[100px] overflow-y-auto whitespace-pre-wrap">
                       {p.content || p.diff}
                     </pre>
                   </div>

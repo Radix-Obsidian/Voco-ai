@@ -16,7 +16,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import vocoLogo from "@/assets/voco-logo.jpg";
 import vocoIcon from "@/assets/voco-icon.png";
 import { useWorkspaces, type Workspace } from "@/hooks/use-workspaces";
 import { useVocoProjects, type VocoProject } from "@/hooks/use-voco-projects";
@@ -126,11 +125,6 @@ const Header = ({ onOpenSettings, onOpenPricing }: HeaderProps) => {
             className="w-full h-full object-contain"
           />
         </div>
-        <img
-          src={vocoLogo}
-          alt="Voco"
-          className="h-7 w-auto object-contain"
-        />
       </div>
 
       {/* Center: Workspace / Project breadcrumbs */}

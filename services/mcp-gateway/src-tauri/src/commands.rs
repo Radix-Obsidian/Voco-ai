@@ -187,9 +187,8 @@ pub async fn sync_ide_config() -> Result<Vec<IdeSyncResult>, String> {
 /// Used by the PricingModal to redirect the user to Stripe Checkout or the
 /// Customer Portal without keeping the URL inside the Tauri webview.
 #[tauri::command]
-pub async fn open_url(app: AppHandle, url: String) -> Result<(), String> {
-    app.shell()
-        .open(&url, None)
+pub async fn open_url(url: String) -> Result<(), String> {
+    tauri_plugin_opener::open_url(url, None::<&str>)
         .map_err(|e| format!("Failed to open URL: {e}"))
 }
 

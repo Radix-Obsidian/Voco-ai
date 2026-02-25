@@ -44,6 +44,9 @@ const AppPage = () => {
     liveTranscript,
   } = isDemoMode ? demoSocket : liveSocket;
 
+  // Demo-specific presenter controls (only used when isDemoMode)
+  const { scenePhase, scene: currentScene, advanceScene, totalScenes } = demoSocket;
+
   const { settings, updateSetting, hasRequiredKeys, pushToBackend, saveSettings } = useSettings();
   const { session } = useAuth();
   useAppUpdater();
@@ -132,6 +135,11 @@ const AppPage = () => {
         else if (pricingOpen && !atTurnLimit) setPricingOpen(false); // blocked when forced paywall
         else if (isCapturing) stopCapture();
       }
+      // Right Arrow — hidden demo advance (invisible to watchers)
+      if (isDemoMode && e.key === "ArrowRight" && scenePhase === "waiting" && proposals.length === 0 && commandProposals.length === 0) {
+        e.preventDefault();
+        advanceScene();
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -179,6 +187,9 @@ const AppPage = () => {
 
   const isSandboxActive = !!sandboxUrl;
 
+  // In demo mode the real mic is never active, so derive "listening" from transcript activity
+  const isListening = isDemoMode ? !!liveTranscript : isCapturing;
+
   /* ====== Voice / Text panel (shared between both layout modes) ====== */
   const voiceTextPanel = (
     <main
@@ -207,7 +218,7 @@ const AppPage = () => {
               relative flex items-center justify-center w-32 h-32 rounded-full
               bg-[#0D0D0D] border border-white/[0.06]
               transition-all duration-500 cursor-pointer
-              ${isCapturing
+              ${isListening
                 ? "animate-orb-listening shadow-voco-glow-lg"
                 : "animate-orb-pulse hover:shadow-voco-glow"
               }
@@ -218,7 +229,7 @@ const AppPage = () => {
             {/* Inner glow ring */}
             <div className={`
               absolute inset-2 rounded-full border transition-all duration-500
-              ${isCapturing
+              ${isListening
                 ? "border-voco-green/40 bg-voco-green/[0.06]"
                 : "border-white/[0.04] bg-transparent"
               }
@@ -227,12 +238,12 @@ const AppPage = () => {
             {/* Mic icon */}
             <Mic className={`
               w-8 h-8 relative z-10 transition-colors duration-300
-              ${isCapturing ? "text-voco-green" : "text-zinc-500"}
+              ${isListening ? "text-voco-green" : "text-zinc-500"}
             `} />
           </button>
 
           {/* Live transcript */}
-          {liveTranscript && isCapturing && (
+          {liveTranscript && isListening && (
             <p className="text-sm text-zinc-300 max-w-sm text-center italic animate-pulse">
               "{liveTranscript}"
             </p>
@@ -242,7 +253,7 @@ const AppPage = () => {
           <p className="text-sm text-zinc-500">
             {!isConnected
               ? "Connecting to Voco..."
-              : isCapturing
+              : isListening
                 ? bargeInActive
                   ? "Listening for your interruption..."
                   : "Listening..."
@@ -353,7 +364,8 @@ const AppPage = () => {
         />
       )}
 
-      <FeedbackWidget />
+      {!isDemoMode && <FeedbackWidget />}
+
     </div>
   );
 };
