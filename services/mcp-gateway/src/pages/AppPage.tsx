@@ -319,6 +319,7 @@ const AppPage = () => {
       <Header
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenPricing={() => setPricingOpen(true)}
+        isDemoMode={isDemoMode}
       />
 
       <SettingsModal
@@ -355,7 +356,7 @@ const AppPage = () => {
       <VisualLedger state={ledgerState} backgroundJobs={backgroundJobs} />
       {renderOverlay()}
 
-      {showOnboarding && (
+      {!isDemoMode && showOnboarding && (
         <OnboardingTour
           onComplete={() => {
             setShowOnboarding(false);

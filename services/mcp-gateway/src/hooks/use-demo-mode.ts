@@ -7,26 +7,15 @@ import type {
   BackgroundJob,
 } from "@/hooks/use-voco-socket";
 import {
-  SCENE0_TRANSCRIPT,
-  SCENE0_LEDGER_STAGES,
-  SCENE0_TERMINAL,
   SCENE1_TRANSCRIPT,
   SCENE1_LEDGER_STAGES,
-  SCENE1_TERMINAL,
-  SCENE2_TRANSCRIPT,
-  SCENE2_LEDGER_STAGES,
   SCENE2_PROPOSALS,
-  SCENE4_TRANSCRIPT,
-  SCENE4_UPDATE_TRANSCRIPT,
-  SCENE4_LEDGER_STAGES,
-  SCENE4_SANDBOX_HTML,
-  SCENE4_UPDATED_HTML,
-  SCENE6_TRANSCRIPT,
-  SCENE6_LEDGER_STAGES,
-  SCENE6_TERMINAL_STAGES,
+  SCENE3_COMMAND,
+  SCENE3_TERMINAL,
+  SCENE3_LEDGER_STAGES,
 } from "@/data/demo-script";
 
-type DemoScene = 1 | 2 | 3 | 4 | 5;
+type DemoScene = 1 | 2 | 3;
 type ScenePhase = "playing" | "waiting" | "hitl";
 
 interface DemoState {
@@ -45,13 +34,15 @@ interface DemoState {
 }
 
 /**
- * Hardcoded demo mode hook that mimics useVocoSocket output
- * with scripted scenes and timed transitions.
+ * Hardcoded demo: "Microservice Extraction" single killer flow.
+ *
+ * Scene 1 — THE ASK:  Voice → 4-node intent ledger animates
+ * Scene 2 — THE PLAN: ReviewDeck with 4 diff proposals (HITL)
+ * Scene 3 — THE YES:  CommandApproval → terminal streams file creation
  */
 export function useDemoMode() {
   const [scene, setScene] = useState<DemoScene>(1);
   const [scenePhase, setScenePhase] = useState<ScenePhase>("playing");
-  const sandboxSubPhase = useRef<1 | 2>(1);
   const [state, setState] = useState<DemoState>({
     isConnected: true,
     bargeInActive: false,
@@ -68,13 +59,10 @@ export function useDemoMode() {
   });
 
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const blobUrls = useRef<string[]>([]);
 
   const clearTimers = useCallback(() => {
     timers.current.forEach(clearTimeout);
     timers.current = [];
-    blobUrls.current.forEach((u) => URL.revokeObjectURL(u));
-    blobUrls.current = [];
   }, []);
 
   const schedule = useCallback((fn: () => void, ms: number) => {
@@ -94,7 +82,7 @@ export function useDemoMode() {
     }
   }, [schedule]);
 
-  // ── Scene 1: Connect Existing Repo ──
+  // ── Scene 1: THE ASK — Voice → Intent Ledger ──
   const runScene1 = useCallback(() => {
     setScenePhase("playing");
     setState((s) => ({
@@ -107,220 +95,114 @@ export function useDemoMode() {
       liveTranscript: "",
     }));
 
-    typeTranscript(SCENE0_TRANSCRIPT, 500, () => {
-      setState((s) => ({ ...s, ledgerState: SCENE0_LEDGER_STAGES[0], liveTranscript: "" }));
+    // Type out: "Extract the auth module into its own microservice…"
+    typeTranscript(SCENE1_TRANSCRIPT, 500, () => {
+      // Transcript done → ledger stage 0: "Parse Intent — Analyzing voice…"
+      setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[0], liveTranscript: "" }));
     });
 
+    // Ledger stage 1: "Plan Arch — Mapping deps…"
     schedule(() => {
-      setState((s) => ({ ...s, ledgerState: SCENE0_LEDGER_STAGES[1] }));
-    }, 3500);
+      setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[1] }));
+    }, 6000);
 
+    // Ledger stage 2: "Gen Diffs — Writing code…"
     schedule(() => {
-      setState((s) => ({
-        ...s,
-        ledgerState: SCENE0_LEDGER_STAGES[2],
-        terminalOutput: SCENE0_TERMINAL,
-      }));
-    }, 5000);
+      setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[2] }));
+    }, 8000);
 
+    // Ledger stage 3: "Propose — Review ready" → transition to Scene 2 (HITL)
     schedule(() => {
-      setState((s) => ({ ...s, ledgerState: null }));
-      setScenePhase("waiting");
-    }, 8500);
+      setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[3] }));
+    }, 10000);
+
+    // Show proposals (ReviewDeck) — presenter must approve
+    schedule(() => {
+      setState((s) => ({ ...s, proposals: SCENE2_PROPOSALS }));
+      setScenePhase("hitl");
+    }, 11000);
   }, [typeTranscript, schedule]);
 
-  // ── Scene 2: Voice Search ──
+  // ── Scene 2: THE PLAN — ReviewDeck diffs (entered via HITL from Scene 1) ──
+  // This scene is triggered when presenter approves proposals in Scene 1.
+  // After approval → show CommandApproval for terminal execution.
   const runScene2 = useCallback(() => {
-    setScenePhase("playing");
+    setScenePhase("hitl");
     setState((s) => ({
       ...s,
       terminalOutput: null,
       proposals: [],
-      commandProposals: [],
       ledgerState: null,
-      sandboxUrl: null,
       liveTranscript: "",
+      commandProposals: [SCENE3_COMMAND],
     }));
+  }, []);
 
-    typeTranscript(SCENE1_TRANSCRIPT, 500, () => {
-      setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[0], liveTranscript: "" }));
-    });
-
-    schedule(() => {
-      setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[1] }));
-    }, 4000);
-
-    schedule(() => {
-      setState((s) => ({
-        ...s,
-        ledgerState: SCENE1_LEDGER_STAGES[2],
-        terminalOutput: SCENE1_TERMINAL,
-      }));
-    }, 5500);
-
-    schedule(() => {
-      setState((s) => ({ ...s, ledgerState: null }));
-      setScenePhase("waiting");
-    }, 9000);
-  }, [typeTranscript, schedule]);
-
-  // ── Scene 3: Code Generation (HITL — presenter approves) ──
+  // ── Scene 3: THE YES — Terminal execution streams file creation ──
   const runScene3 = useCallback(() => {
     setScenePhase("playing");
     setState((s) => ({
       ...s,
-      terminalOutput: null,
-      proposals: [],
       commandProposals: [],
-      ledgerState: null,
-      sandboxUrl: null,
+      proposals: [],
       liveTranscript: "",
+      ledgerState: SCENE3_LEDGER_STAGES[0],
     }));
 
-    typeTranscript(SCENE2_TRANSCRIPT, 500, () => {
-      setState((s) => ({ ...s, ledgerState: SCENE2_LEDGER_STAGES[0], liveTranscript: "" }));
-    });
-
+    // Files being created
     schedule(() => {
-      setState((s) => ({ ...s, ledgerState: SCENE2_LEDGER_STAGES[1] }));
-    }, 5000);
-
-    // Show proposals — presenter must approve/reject via ReviewDeck
-    schedule(() => {
-      setState((s) => ({ ...s, proposals: SCENE2_PROPOSALS }));
-      setScenePhase("hitl");
-    }, 6000);
-  }, [typeTranscript, schedule]);
-
-  // ── Scene 4: AI Chat Builder → Live Sandbox ──
-  // Sub-phase 1: build initial app, wait for presenter to explore
-  // Sub-phase 2: follow-up voice update, wait again
-  const runScene4 = useCallback(() => {
-    setScenePhase("playing");
-    sandboxSubPhase.current = 1;
-    setState((s) => ({
-      ...s,
-      terminalOutput: null,
-      proposals: [],
-      commandProposals: [],
-      ledgerState: null,
-      sandboxUrl: null,
-      liveTranscript: "",
-    }));
-
-    typeTranscript(SCENE4_TRANSCRIPT, 500, () => {
-      setState((s) => ({ ...s, ledgerState: SCENE4_LEDGER_STAGES[0], liveTranscript: "" }));
-    });
-
-    schedule(() => {
-      setState((s) => ({ ...s, ledgerState: SCENE4_LEDGER_STAGES[1] }));
-    }, 4500);
-
-    // Sandbox goes live — presenter can interact before advancing
-    schedule(() => {
-      const blob = new Blob([SCENE4_SANDBOX_HTML], { type: "text/html" });
-      const url = URL.createObjectURL(blob);
-      blobUrls.current.push(url);
       setState((s) => ({
         ...s,
-        ledgerState: SCENE4_LEDGER_STAGES[2],
-        sandboxUrl: url,
-        sandboxRefreshKey: s.sandboxRefreshKey + 1,
+        ledgerState: SCENE3_LEDGER_STAGES[1],
+        terminalOutput: { ...SCENE3_TERMINAL, isLoading: true },
       }));
-      setScenePhase("waiting");
-    }, 6000);
-  }, [typeTranscript, schedule]);
+    }, 1500);
 
-  // Scene 4 follow-up: type update transcript, swap to enhanced HTML
-  const runScene4Update = useCallback(() => {
-    setScenePhase("playing");
-    sandboxSubPhase.current = 2;
-
-    typeTranscript(SCENE4_UPDATE_TRANSCRIPT, 0, () => {
-      const blob = new Blob([SCENE4_UPDATED_HTML], { type: "text/html" });
-      const url = URL.createObjectURL(blob);
-      blobUrls.current.push(url);
+    // Proto compiling
+    schedule(() => {
       setState((s) => ({
         ...s,
-        liveTranscript: "",
-        sandboxUrl: url,
-        sandboxRefreshKey: s.sandboxRefreshKey + 1,
+        ledgerState: SCENE3_LEDGER_STAGES[2],
+        terminalOutput: SCENE3_TERMINAL,
       }));
-      setScenePhase("waiting");
-    });
-  }, [typeTranscript]);
-
-  // ── Scene 5: Deep Codebase Exploration (All 4 Search Primitives) ──
-  const runScene5 = useCallback(() => {
-    setScenePhase("playing");
-    setState((s) => ({
-      ...s,
-      terminalOutput: null,
-      proposals: [],
-      commandProposals: [],
-      ledgerState: null,
-      sandboxUrl: null,
-      liveTranscript: "",
-    }));
-
-    typeTranscript(SCENE6_TRANSCRIPT, 500, () => {
-      setState((s) => ({ ...s, ledgerState: SCENE6_LEDGER_STAGES[0], liveTranscript: "" }));
-    });
-
-    schedule(() => {
-      setState((s) => ({ ...s, terminalOutput: SCENE6_TERMINAL_STAGES[0] }));
     }, 4000);
 
+    // Done — wait for presenter to loop or end
     schedule(() => {
-      setState((s) => ({
-        ...s,
-        ledgerState: SCENE6_LEDGER_STAGES[1],
-        terminalOutput: SCENE6_TERMINAL_STAGES[1],
-      }));
-    }, 7500);
-
-    schedule(() => {
-      setState((s) => ({
-        ...s,
-        ledgerState: SCENE6_LEDGER_STAGES[2],
-        terminalOutput: SCENE6_TERMINAL_STAGES[2],
-      }));
-    }, 11000);
-
-    schedule(() => {
-      setState((s) => ({ ...s, ledgerState: SCENE6_LEDGER_STAGES[3] }));
+      setState((s) => ({ ...s, ledgerState: null }));
       setScenePhase("waiting");
-    }, 14000);
-  }, [typeTranscript, schedule]);
+    }, 6500);
+  }, [schedule]);
 
   // ── Presenter controls ──
 
-  // Advance to next scene (or sub-phase within scene 4)
   const advanceScene = useCallback(() => {
-    // Scene 4 sub-phase 1 → trigger follow-up update
-    if (scene === 4 && sandboxSubPhase.current === 1) {
-      clearTimers();
-      runScene4Update();
-      return;
-    }
     clearTimers();
-    if (scene < 5) {
+    if (scene < 3) {
       setScene((s) => (s + 1) as DemoScene);
     } else {
+      // Loop back to Scene 1
       setScene(1);
     }
-  }, [scene, clearTimers, runScene4Update]);
+  }, [scene, clearTimers]);
 
-  // HITL: presenter approves/rejects proposals → clear and advance
+  // HITL: presenter approves proposals → move to Scene 2 (command approval)
   const handleProposalDecisions = useCallback(() => {
     setState((s) => ({ ...s, proposals: [], ledgerState: null }));
-    setTimeout(() => advanceScene(), 300);
-  }, [advanceScene]);
+    setTimeout(() => {
+      clearTimers();
+      setScene(2);
+    }, 300);
+  }, [clearTimers]);
 
+  // HITL: presenter approves command → move to Scene 3 (terminal execution)
   const handleCommandDecisions = useCallback(() => {
     setState((s) => ({ ...s, commandProposals: [], ledgerState: null }));
-    setTimeout(() => advanceScene(), 300);
-  }, [advanceScene]);
+    setTimeout(() => {
+      clearTimers();
+      setScene(3);
+    }, 300);
+  }, [clearTimers]);
 
   // Run the current scene
   useEffect(() => {
@@ -328,10 +210,8 @@ export function useDemoMode() {
     if (scene === 1) runScene1();
     else if (scene === 2) runScene2();
     else if (scene === 3) runScene3();
-    else if (scene === 4) runScene4();
-    else if (scene === 5) runScene5();
     return clearTimers;
-  }, [scene, runScene1, runScene2, runScene3, runScene4, runScene5, clearTimers]);
+  }, [scene, runScene1, runScene2, runScene3, clearTimers]);
 
   // No-op functions to match useVocoSocket interface
   const noop = useCallback(() => {}, []);
@@ -363,6 +243,6 @@ export function useDemoMode() {
     scenePhase,
     scene,
     advanceScene,
-    totalScenes: 5 as const,
+    totalScenes: 3 as const,
   };
 }

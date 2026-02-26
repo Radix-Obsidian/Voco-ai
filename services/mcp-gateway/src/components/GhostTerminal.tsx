@@ -19,6 +19,8 @@ export function GhostTerminal({ output, onClose }: GhostTerminalProps) {
 
   if (!output) return null;
 
+  const scope = output.scope ?? "local";
+
   const scopeColors = {
     local: "bg-blue-500/20 text-blue-400 border-blue-500/30",
     web: "bg-purple-500/20 text-purple-400 border-purple-500/30",
@@ -26,7 +28,7 @@ export function GhostTerminal({ output, onClose }: GhostTerminalProps) {
   };
 
   return (
-    <div className="fixed bottom-4 right-4 w-[420px] max-h-[300px] bg-zinc-950/95 backdrop-blur-xl border border-zinc-800 rounded-lg shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 fade-in duration-300">
+    <div className="fixed bottom-4 right-4 w-[420px] max-w-[calc(100vw-2rem)] max-h-[300px] bg-zinc-950/95 backdrop-blur-xl border border-zinc-800 rounded-lg shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 fade-in duration-300">
       <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800 bg-zinc-900/50">
         <div className="flex items-center gap-2">
           <div className="flex gap-1.5">
@@ -39,8 +41,8 @@ export function GhostTerminal({ output, onClose }: GhostTerminalProps) {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className={`${scopeColors[output.scope]} text-xs border`}>
-            {output.scope.toUpperCase()}
+          <Badge variant="outline" className={`${scopeColors[scope]} text-xs border`}>
+            {scope.toUpperCase()}
           </Badge>
           {onClose && (
             <button
@@ -108,7 +110,7 @@ export function GhostTerminal({ output, onClose }: GhostTerminalProps) {
         <div className="flex items-center justify-between text-xs text-zinc-600">
           <span>Press Esc to close</span>
           <span className="font-mono">
-            {output.scope === "local" ? "ripgrep" : output.scope === "web" ? "WebMCP" : "hybrid"}
+            {scope === "local" ? "ripgrep" : scope === "web" ? "WebMCP" : "hybrid"}
           </span>
         </div>
       </div>

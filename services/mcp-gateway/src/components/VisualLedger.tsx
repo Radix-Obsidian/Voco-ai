@@ -177,7 +177,7 @@ export function VisualLedger({ state, backgroundJobs }: VisualLedgerProps) {
   if (!state && !hasBackgroundJobs) return null;
 
   return (
-    <div className="fixed top-16 right-4 z-40 w-auto max-w-xl p-3 bg-zinc-950/95 border border-zinc-800 rounded-xl backdrop-blur-xl shadow-2xl animate-in slide-in-from-top-4 fade-in duration-300">
+    <div className="fixed top-16 right-4 z-40 w-auto max-w-[calc(100vw-2rem)] p-3 bg-zinc-950/95 border border-zinc-800 rounded-xl backdrop-blur-xl shadow-2xl animate-in slide-in-from-top-4 fade-in duration-300">
 
       {/* ── Pipeline header ── */}
       {state && (
@@ -194,7 +194,7 @@ export function VisualLedger({ state, backgroundJobs }: VisualLedgerProps) {
           </div>
 
           {/* ── DAG pipeline row ── */}
-          <div className="flex items-center justify-center gap-2">
+          <div className="flex items-center justify-center gap-2 overflow-x-auto">
             {state.nodes.map((node, index) => (
               <div key={node.id} className="flex items-center gap-2">
                 <DagNode node={node} />
