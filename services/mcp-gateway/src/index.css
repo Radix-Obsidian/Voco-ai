@@ -159,3 +159,20 @@
   scrollbar-width: thin;
   scrollbar-color: rgba(0, 255, 170, 0.25) transparent;
 }
+
+/* Sidebar panel responsive behavior */
+@media (max-width: 767px) {
+  /* On mobile: sidebar becomes a bottom sheet overlay */
+  aside[class*="fixed"][class*="top-14"] {
+    top: auto !important;
+    bottom: 0 !important;
+    right: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 60vh;
+    border-left: none !important;
+    border-top: 1px solid hsl(var(--border));
+    border-radius: 16px 16px 0 0;
+  }
+}

@@ -3,10 +3,7 @@ import Header from "@/components/Header";
 import { useVocoSocket, type TerminalOutput } from "@/hooks/use-voco-socket";
 import { useAudioCapture } from "@/hooks/use-audio-capture";
 import { useSettings } from "@/hooks/use-settings";
-import { GhostTerminal } from "@/components/GhostTerminal";
-import { ReviewDeck } from "@/components/ReviewDeck";
-import { CommandApproval } from "@/components/CommandApproval";
-import { VisualLedger } from "@/components/VisualLedger";
+import { SidebarPanel } from "@/components/SidebarPanel";
 import { SettingsModal } from "@/components/SettingsModal";
 import { PricingModal } from "@/components/PricingModal";
 import { OnboardingTour } from "@/components/OnboardingTour";
@@ -175,15 +172,7 @@ const AppPage = () => {
     }
   };
 
-  const renderOverlay = () => {
-    if (commandProposals.length > 0) {
-      return <CommandApproval commands={commandProposals} onSubmitDecisions={submitCommandDecisions} />;
-    }
-    if (proposals.length > 0) {
-      return <ReviewDeck proposals={proposals} onSubmitDecisions={submitProposalDecisions} />;
-    }
-    return <GhostTerminal output={terminalOutput} onClose={handleCloseTerminal} />;
-  };
+  const hasSidebarContent = !!ledgerState || backgroundJobs.length > 0 || !!terminalOutput || proposals.length > 0 || commandProposals.length > 0;
 
   const isSandboxActive = !!sandboxUrl;
 
@@ -196,6 +185,7 @@ const AppPage = () => {
       className={`flex flex-col items-center justify-center px-6 transition-all duration-500
         ${isSandboxActive ? "w-[420px] min-w-[340px] shrink-0 h-full" : "min-h-screen flex-1"}
         ${!isDemoMode && !hasRequiredKeys ? "blur-sm pointer-events-none select-none opacity-50" : ""}
+        ${hasSidebarContent && !isSandboxActive ? "lg:pr-[440px]" : ""}
       `}
     >
       {mode === "speak" ? (
@@ -353,8 +343,16 @@ const AppPage = () => {
         voiceTextPanel
       )}
 
-      <VisualLedger state={ledgerState} backgroundJobs={backgroundJobs} />
-      {renderOverlay()}
+      <SidebarPanel
+        ledgerState={ledgerState}
+        backgroundJobs={backgroundJobs}
+        terminalOutput={terminalOutput}
+        proposals={proposals}
+        commandProposals={commandProposals}
+        onCloseTerminal={handleCloseTerminal}
+        onSubmitProposalDecisions={submitProposalDecisions}
+        onSubmitCommandDecisions={submitCommandDecisions}
+      />
 
       {!isDemoMode && showOnboarding && (
         <OnboardingTour

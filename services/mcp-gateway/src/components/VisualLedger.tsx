@@ -89,23 +89,23 @@ const DagNode = ({ node }: { node: LedgerNode }) => {
   return (
     <div
       className={[
-        "relative flex flex-col items-center p-2 rounded-lg border transition-all duration-500 w-20 overflow-hidden",
+        "relative flex flex-col items-center p-3 rounded-xl border transition-all duration-500 min-w-[72px] max-w-[100px] flex-1 shrink-0 overflow-hidden",
         isActive
           ? "border-primary/50 bg-primary/5 shadow-[0_0_20px_rgba(0,255,170,0.15)]"
           : isCompleted
-          ? "bg-zinc-900 border-voco-cyan/30 text-voco-cyan"
+          ? "bg-zinc-900/80 border-voco-cyan/30 text-voco-cyan"
           : isFailed
           ? "border-destructive/50 bg-destructive/5 text-destructive"
-          : "bg-zinc-950 border-zinc-800 text-zinc-500",
+          : "bg-zinc-900/40 border-zinc-800 text-zinc-500",
       ].join(" ")}
     >
       <Icon
-        className={`w-4 h-4 mb-1 ${
+        className={`w-5 h-5 mb-1.5 shrink-0 ${
           isActive ? "text-primary" : isCompleted ? "text-voco-cyan" : isFailed ? "text-destructive" : "text-zinc-600"
         }`}
       />
-      <h3 className="text-[10px] font-bold tracking-wide text-center leading-tight">{node.title}</h3>
-      <p className="text-[9px] mt-0.5 text-center opacity-80 leading-tight truncate w-full">
+      <h3 className="text-[11px] font-semibold tracking-wide text-center leading-tight truncate w-full">{node.title}</h3>
+      <p className="text-[10px] mt-1 text-center opacity-70 leading-tight truncate w-full">
         {isActive ? "Running…" : node.description}
       </p>
 
@@ -177,24 +177,26 @@ export function VisualLedger({ state, backgroundJobs }: VisualLedgerProps) {
   if (!state && !hasBackgroundJobs) return null;
 
   return (
-    <div className="fixed top-16 right-4 z-40 w-auto max-w-[calc(100vw-2rem)] p-3 bg-zinc-950/95 border border-zinc-800 rounded-xl backdrop-blur-xl shadow-2xl animate-in slide-in-from-top-4 fade-in duration-300">
+    <div className="w-full animate-in fade-in duration-200">
 
       {/* ── Pipeline header ── */}
       {state && (
         <>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xs font-mono text-voco-cyan flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              Intent Ledger:{" "}
-              <span className="text-zinc-300">{state.domain}</span>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-[11px] font-medium uppercase tracking-widest text-voco-cyan flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4" />
+              <span>Intent Ledger</span>
+              <span className="text-zinc-400 normal-case tracking-normal font-normal">
+                {state.domain}
+              </span>
             </h2>
-            <span className="text-[10px] uppercase tracking-widest text-voco-cyan bg-voco-cyan/10 px-2 py-0.5 rounded-full">
-              Pipeline Active
+            <span className="text-[10px] uppercase tracking-widest text-voco-cyan bg-voco-cyan/10 px-2.5 py-1 rounded-full font-medium">
+              Active
             </span>
           </div>
 
           {/* ── DAG pipeline row ── */}
-          <div className="flex items-center justify-center gap-2 overflow-x-auto">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
             {state.nodes.map((node, index) => (
               <div key={node.id} className="flex items-center gap-2">
                 <DagNode node={node} />
@@ -213,11 +215,11 @@ export function VisualLedger({ state, backgroundJobs }: VisualLedgerProps) {
 
       {/* ── Background jobs strip ── */}
       {hasBackgroundJobs && (
-        <div className={state ? "mt-3 pt-3 border-t border-zinc-800" : ""}>
-          <p className="text-xs uppercase tracking-widest text-zinc-500 mb-2 font-mono">
+        <div className={state ? "mt-4 pt-4 border-t border-zinc-800/60" : ""}>
+          <p className="text-[11px] uppercase tracking-widest text-zinc-500 mb-3 font-medium">
             Background Queue
           </p>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-2">
             {backgroundJobs.map((job) => (
               <BackgroundJobCard key={job.job_id} job={job} />
             ))}
