@@ -15,6 +15,8 @@ interface PricingModalProps {
   /** When true the modal is a hard paywall — cannot be dismissed */
   forcedOpen?: boolean;
   userEmail?: string;
+  /** Founder accounts bypass the paywall entirely */
+  isFounder?: boolean;
 }
 
 const FREE_FEATURES = [
@@ -42,12 +44,12 @@ async function openInBrowser(url: string): Promise<void> {
   }
 }
 
-export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail = "" }: PricingModalProps) {
+export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail = "", isFounder = false }: PricingModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const handleOpenChange = (val: boolean) => {
-    if (forcedOpen && !val) return; // hard paywall — block all dismissal
+    if (forcedOpen && !isFounder && !val) return; // hard paywall — block all dismissal (founders exempt)
     onOpenChange(val);
   };
 
@@ -85,13 +87,15 @@ export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-zinc-100 text-xl">
-            {forcedOpen ? <Lock className="h-5 w-5 text-voco-green" /> : <Zap className="h-5 w-5 text-voco-cyan" />}
-            {forcedOpen ? "Sandbox Limit Reached" : "Upgrade Voco"}
+            {isFounder ? <ShieldCheck className="h-5 w-5 text-emerald-400" /> : forcedOpen ? <Lock className="h-5 w-5 text-voco-green" /> : <Zap className="h-5 w-5 text-voco-cyan" />}
+            {isFounder ? "Founder Access" : forcedOpen ? "Sandbox Limit Reached" : "Upgrade Voco"}
           </DialogTitle>
           <DialogDescription className="text-zinc-400">
-            {forcedOpen
-              ? "You've used your 50 free turns. Upgrade to keep building at the speed of thought."
-              : "Unlock unlimited voice commands and every tool in the arsenal."}
+            {isFounder
+              ? "You have unlimited founder access. Use this page to test the Stripe payment flow."
+              : forcedOpen
+                ? "You've used your 50 free turns. Upgrade to keep building at the speed of thought."
+                : "Unlock unlimited voice commands and every tool in the arsenal."}
           </DialogDescription>
         </DialogHeader>
 

@@ -4,23 +4,48 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import AppPage from "./pages/AppPage";
 import ProtectedRoute from "./components/ProtectedRoute";
+import SplashScreen from "./components/SplashScreen";
+import { useBackendReady } from "./hooks/use-backend-ready";
+import { useState, useCallback } from "react";
 
 const queryClient = new QueryClient();
 
-const isDemoMode = new URLSearchParams(window.location.search).get("demo") === "true";
+const SPLASH_MIN_DISPLAY_MS = 7000;
+
+const AppInner = () => {
+  const { isReady, error } = useBackendReady();
+  const [splashDone, setSplashDone] = useState(false);
+  const handleSplashReady = useCallback(() => setSplashDone(true), []);
+
+  if (error) {
+    return <SplashScreen error={error} onRetry={() => window.location.reload()} />;
+  }
+
+  if (!isReady || !splashDone) {
+    return (
+      <SplashScreen
+        error={null}
+        minDisplayTime={SPLASH_MIN_DISPLAY_MS}
+        onReady={handleSplashReady}
+      />
+    );
+  }
+
+  return (
+    <>
+      <Toaster />
+      <Sonner />
+      <ProtectedRoute>
+        <AppPage />
+      </ProtectedRoute>
+    </>
+  );
+};
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      {isDemoMode ? (
-        <AppPage />
-      ) : (
-        <ProtectedRoute>
-          <AppPage />
-        </ProtectedRoute>
-      )}
+      <AppInner />
     </TooltipProvider>
   </QueryClientProvider>
 );

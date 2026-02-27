@@ -7,6 +7,7 @@ import {
   Plus,
   LogOut,
   Loader2,
+  HelpCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,6 +22,7 @@ import { useWorkspaces, type Workspace } from "@/hooks/use-workspaces";
 import { useVocoProjects, type VocoProject } from "@/hooks/use-voco-projects";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
+import CommandsModal from "@/components/CommandsModal";
 
 const WS_KEY = "voco-active-workspace";
 const PROJ_KEY = "voco-active-project";
@@ -29,12 +31,12 @@ interface HeaderProps {
   onOpenHistory?: () => void;
   onOpenSettings?: () => void;
   onOpenPricing?: () => void;
-  isDemoMode?: boolean;
 }
 
-const Header = ({ onOpenSettings, onOpenPricing, isDemoMode = false }: HeaderProps) => {
+const Header = ({ onOpenSettings, onOpenPricing }: HeaderProps) => {
   const { signOut } = useAuth();
   const { toast } = useToast();
+  const [commandsOpen, setCommandsOpen] = useState(false);
   const { workspaces, isLoading: wsLoading, createWorkspace } = useWorkspaces();
   const [activeWsId, setActiveWsId] = useState<string | null>(() => localStorage.getItem(WS_KEY));
   const [activeProjId, setActiveProjId] = useState<string | null>(() => localStorage.getItem(PROJ_KEY));
@@ -134,7 +136,7 @@ const Header = ({ onOpenSettings, onOpenPricing, isDemoMode = false }: HeaderPro
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04] transition-colors">
-              <span>{isDemoMode ? "Voco Demo" : wsLoading ? "Loading..." : activeWorkspace?.name ?? "No workspace"}</span>
+              <span>{wsLoading ? "Loading..." : activeWorkspace?.name ?? "No workspace"}</span>
               <ChevronDown className="w-3 h-3 opacity-50" />
             </button>
           </DropdownMenuTrigger>
@@ -163,7 +165,7 @@ const Header = ({ onOpenSettings, onOpenPricing, isDemoMode = false }: HeaderPro
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.04] transition-colors">
-              <span>{isDemoMode ? "shopwave" : projLoading ? "Loading..." : activeProject?.name ?? "No project"}</span>
+              <span>{projLoading ? "Loading..." : activeProject?.name ?? "No project"}</span>
               <ChevronDown className="w-3 h-3 opacity-50" />
             </button>
           </DropdownMenuTrigger>
@@ -205,17 +207,25 @@ const Header = ({ onOpenSettings, onOpenPricing, isDemoMode = false }: HeaderPro
 
       {/* Right: Upgrade CTA + Settings + Sign Out */}
       <div className="flex items-center gap-2">
-        {!isDemoMode && (
-          <Button
-            onClick={onOpenPricing}
-            size="sm"
-            className="h-7 px-3 gap-1.5 bg-voco-green/20 hover:bg-voco-green/30 text-voco-cyan hover:text-voco-cyan border border-voco-green/30 text-xs font-medium"
-            variant="ghost"
-          >
-            <Zap className="h-3 w-3" />
-            Upgrade
-          </Button>
-        )}
+        <Button
+          onClick={onOpenPricing}
+          size="sm"
+          className="h-7 px-3 gap-1.5 bg-voco-green/20 hover:bg-voco-green/30 text-voco-cyan hover:text-voco-cyan border border-voco-green/30 text-xs font-medium"
+          variant="ghost"
+        >
+          <Zap className="h-3 w-3" />
+          Upgrade
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setCommandsOpen(true)}
+          className="text-zinc-500 hover:text-zinc-300 h-8 w-8"
+          title="Voice Commands (Ctrl+?)"
+        >
+          <HelpCircle className="h-4 w-4" />
+        </Button>
 
         <Button
           variant="ghost"
@@ -226,18 +236,18 @@ const Header = ({ onOpenSettings, onOpenPricing, isDemoMode = false }: HeaderPro
           <Settings className="h-4 w-4" />
         </Button>
 
-        {!isDemoMode && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={signOut}
-            className="text-zinc-500 hover:text-zinc-300 h-8 w-8"
-            title="Sign out"
-          >
-            <LogOut className="h-4 w-4" />
-          </Button>
-        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={signOut}
+          className="text-zinc-500 hover:text-zinc-300 h-8 w-8"
+          title="Sign out"
+        >
+          <LogOut className="h-4 w-4" />
+        </Button>
       </div>
+
+      <CommandsModal open={commandsOpen} onOpenChange={setCommandsOpen} />
     </header>
   );
 };

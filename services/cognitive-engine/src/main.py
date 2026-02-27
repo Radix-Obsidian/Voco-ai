@@ -22,6 +22,7 @@ from typing import AsyncGenerator
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
@@ -31,6 +32,7 @@ from src.db import sync_ledger_to_supabase, update_ledger_node
 from src.graph.background_worker import BackgroundJobQueue
 from src.ide_mcp_server import attach_ide_mcp_routes
 
+from src.debug import debug_logger
 from src.audio.stt import DeepgramSTT
 from src.audio.tts import CartesiaTTS
 from src.audio.vad import VocoVADStreamer, load_silero_model
@@ -157,8 +159,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(title="Voco Cognitive Engine", version="0.1.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8080",
+        "http://localhost:1420",
+        "tauri://localhost",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 attach_ide_mcp_routes(app)
 app.include_router(billing_router)
+
+
+@app.get("/debug/events")
+async def get_debug_events(limit: int = 100) -> dict:
+    """Return recent debug events for troubleshooting."""
+    return {"events": debug_logger.get_recent_events(limit)}
 
 
 @app.get("/health")
@@ -198,6 +219,7 @@ async def voco_stream(websocket: WebSocket) -> None:
     thread_id = _new_thread_id()
     config = {"configurable": {"thread_id": thread_id}}
     logger.info("[Session] New thread: %s", thread_id)
+    debug_logger.log_ws_event("connect", thread_id, {"url": str(websocket.url)})
 
     # Per-session SQLite checkpointer — persists graph state across restarts (GAP #2).
     _session_checkpointer = await get_checkpointer(thread_id)
@@ -1044,21 +1066,31 @@ async def voco_stream(websocket: WebSocket) -> None:
                                 msg_id,
                             )
                     elif msg_type == "auth_sync":
-                        _auth_token = payload.get("token", "")
-                        _auth_uid = payload.get("uid", "local")
-                        _refresh_token = payload.get("refresh_token", "")
-                        # Extract voco_session_token from Supabase user metadata
-                        # (LiteLLM virtual key stored in user_metadata by admin)
-                        voco_token = payload.get("voco_session_token", "")
-                        if not voco_token:
-                            # Fallback: check if the frontend included it
-                            voco_token = os.environ.get("LITELLM_SESSION_TOKEN", "")
-                        if voco_token:
-                            set_session_token(voco_token)
-                        # Re-initialize Supabase client with user JWT for RLS
-                        from src.db import set_auth_jwt
-                        set_auth_jwt(_auth_token, _auth_uid, refresh_token=_refresh_token)
-                        logger.info("[WS] auth_sync: uid=%s token_len=%d", _auth_uid, len(_auth_token))
+                        try:
+                            _auth_token = payload.get("token", "")
+                            _auth_uid = payload.get("uid", "local")
+                            _refresh_token = payload.get("refresh_token", "")
+                            # Extract voco_session_token from Supabase user metadata
+                            # (LiteLLM virtual key stored in user_metadata by admin)
+                            voco_token = payload.get("voco_session_token", "")
+                            if not voco_token:
+                                # Fallback: check if the frontend included it
+                                voco_token = os.environ.get("LITELLM_SESSION_TOKEN", "")
+                            if voco_token:
+                                set_session_token(voco_token)
+                            # Re-initialize Supabase client with user JWT for RLS
+                            from src.db import set_auth_jwt
+                            set_auth_jwt(_auth_token, _auth_uid, refresh_token=_refresh_token)
+                            logger.info("[WS] auth_sync: uid=%s token_len=%d", _auth_uid, len(_auth_token))
+                            debug_logger.log_ws_event("auth_sync", thread_id, {"uid": _auth_uid, "token_len": len(_auth_token)})
+                        except Exception as auth_exc:
+                            debug_logger.log_auth_failure(thread_id, "auth_sync processing failed", auth_exc)
+                            await send_error(websocket, VocoError(
+                                code=ErrorCode.E_GRAPH_FAILED,
+                                message=f"Auth sync failed: {auth_exc}",
+                                recoverable=True,
+                                session_id=thread_id,
+                            ))
                     elif msg_type == "update_env":
                         env_patch = payload.get("env", {})
                         for k, v in env_patch.items():
@@ -1086,6 +1118,7 @@ async def voco_stream(websocket: WebSocket) -> None:
                     logger.warning("[WS] Non-JSON text message ignored")
     except WebSocketDisconnect:
         logger.info("Client disconnected")
+        debug_logger.log_ws_event("disconnect", thread_id, {"reason": "client_initiated"})
     finally:
         cleanup_task.cancel()
         logger.info(

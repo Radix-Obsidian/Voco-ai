@@ -443,7 +443,9 @@ export function useVocoSocket() {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "auth_sync", token, uid, refresh_token: refreshToken || "" }));
-      console.log("[VocoSocket] auth_sync sent for uid:", uid);
+      console.log(`[VocoSocket] auth_sync sent for uid=${uid} token_len=${token.length} at ${new Date().toISOString()}`);
+    } else {
+      console.warn(`[VocoSocket] auth_sync skipped — ws not open (readyState=${ws?.readyState})`);
     }
   }, []);
 
@@ -471,7 +473,7 @@ export function useVocoSocket() {
       setIsReconnecting(false);
       reconnectAttemptRef.current = 0;
       intentionalCloseRef.current = false;
-      console.log("[VocoSocket] Connected to", WS_URL);
+      console.log(`[VocoSocket] Connected to ${WS_URL} at ${new Date().toISOString()}`);
     };
 
     const slog = (level: "log" | "warn" | "error", ...args: unknown[]) => {
@@ -672,10 +674,10 @@ export function useVocoSocket() {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       setIsConnected(false);
       setLedgerState(null);
-      console.log("[VocoSocket] Disconnected");
+      console.log(`[VocoSocket] Disconnected at ${new Date().toISOString()} — code=${ev.code} reason="${ev.reason}" wasClean=${ev.wasClean}`);
 
       // Auto-reconnect with exponential backoff (GAP #11)
       if (!intentionalCloseRef.current && reconnectAttemptRef.current < MAX_RECONNECT_ATTEMPTS) {
@@ -697,8 +699,9 @@ export function useVocoSocket() {
       }
     };
 
-    ws.onerror = () => {
+    ws.onerror = (ev) => {
       setIsConnected(false);
+      console.error(`[VocoSocket] Error at ${new Date().toISOString()}:`, ev);
     };
 
     wsRef.current = ws;

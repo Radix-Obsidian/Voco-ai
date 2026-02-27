@@ -12,13 +12,8 @@ import { FeedbackWidget } from "@/components/FeedbackWidget";
 import { Mic, Send } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useAppUpdater } from "@/hooks/use-app-updater";
-import { useDemoMode } from "@/hooks/use-demo-mode";
-
-const isDemoMode = new URLSearchParams(window.location.search).get("demo") === "true";
 
 const AppPage = () => {
-  const liveSocket = useVocoSocket();
-  const demoSocket = useDemoMode();
   const {
     isConnected,
     bargeInActive,
@@ -39,13 +34,10 @@ const AppPage = () => {
     setSandboxUrl,
     sendAuthSync,
     liveTranscript,
-  } = isDemoMode ? demoSocket : liveSocket;
-
-  // Demo-specific presenter controls (only used when isDemoMode)
-  const { scenePhase, scene: currentScene, advanceScene, totalScenes } = demoSocket;
+  } = useVocoSocket();
 
   const { settings, updateSetting, hasRequiredKeys, pushToBackend, saveSettings } = useSettings();
-  const { session } = useAuth();
+  const { session, isFounder } = useAuth();
   useAppUpdater();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
@@ -56,7 +48,7 @@ const AppPage = () => {
     return parseInt(localStorage.getItem("voco-free-turns") ?? "0", 10);
   });
   const userTier: string = localStorage.getItem("voco-tier") ?? "free";
-  const atTurnLimit = !isDemoMode && userTier === "free" && turnCount >= FREE_TURN_LIMIT;
+  const atTurnLimit = !isFounder && userTier === "free" && turnCount >= FREE_TURN_LIMIT;
   const prevTerminalOutput = useRef<TerminalOutput | null>(null);
   const [mode, setMode] = useState<"speak" | "type">("speak");
   const [textInput, setTextInput] = useState("");
@@ -72,7 +64,7 @@ const AppPage = () => {
     return () => disconnect();
   }, [connect, disconnect]);
 
-  const needsKeys = !isDemoMode && !hasRequiredKeys;
+  const needsKeys = !hasRequiredKeys;
   useEffect(() => {
     if (needsKeys) {
       const id = requestAnimationFrame(() => setSettingsOpen(true));
@@ -132,11 +124,6 @@ const AppPage = () => {
         else if (pricingOpen && !atTurnLimit) setPricingOpen(false); // blocked when forced paywall
         else if (isCapturing) stopCapture();
       }
-      // Right Arrow — hidden demo advance (invisible to watchers)
-      if (isDemoMode && e.key === "ArrowRight" && scenePhase === "waiting" && proposals.length === 0 && commandProposals.length === 0) {
-        e.preventDefault();
-        advanceScene();
-      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -176,15 +163,14 @@ const AppPage = () => {
 
   const isSandboxActive = !!sandboxUrl;
 
-  // In demo mode the real mic is never active, so derive "listening" from transcript activity
-  const isListening = isDemoMode ? !!liveTranscript : isCapturing;
+  const isListening = isCapturing;
 
   /* ====== Voice / Text panel (shared between both layout modes) ====== */
   const voiceTextPanel = (
     <main
       className={`flex flex-col items-center justify-center px-6 transition-all duration-500
         ${isSandboxActive ? "w-[420px] min-w-[340px] shrink-0 h-full" : "min-h-screen flex-1"}
-        ${!isDemoMode && !hasRequiredKeys ? "blur-sm pointer-events-none select-none opacity-50" : ""}
+        ${!hasRequiredKeys ? "blur-sm pointer-events-none select-none opacity-50" : ""}
         ${hasSidebarContent && !isSandboxActive ? "lg:pr-[440px]" : ""}
       `}
     >
@@ -309,7 +295,6 @@ const AppPage = () => {
       <Header
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenPricing={() => setPricingOpen(true)}
-        isDemoMode={isDemoMode}
       />
 
       <SettingsModal
@@ -325,6 +310,7 @@ const AppPage = () => {
         onOpenChange={setPricingOpen}
         forcedOpen={atTurnLimit}
         userEmail={session?.user?.email ?? ""}
+        isFounder={isFounder}
       />
 
       {/* Content area — single-column or split-screen depending on sandbox state */}
@@ -354,7 +340,7 @@ const AppPage = () => {
         onSubmitCommandDecisions={submitCommandDecisions}
       />
 
-      {!isDemoMode && showOnboarding && (
+      {showOnboarding && (
         <OnboardingTour
           onComplete={() => {
             setShowOnboarding(false);
@@ -363,7 +349,7 @@ const AppPage = () => {
         />
       )}
 
-      {!isDemoMode && <FeedbackWidget />}
+      <FeedbackWidget />
 
     </div>
   );
