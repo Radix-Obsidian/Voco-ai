@@ -20,11 +20,11 @@ if (-not (Test-Path ".env")) {
 
 # --- Step 1: Upload only the files Docker needs ---
 Write-Host "Step 1: Creating remote directory..." -ForegroundColor Yellow
-ssh "root@$DropletIP" "mkdir -p ~/cognitive-engine"
+ssh -p 1414 "root@$DropletIP" "mkdir -p ~/cognitive-engine"
 
 Write-Host "Step 2: Uploading files (config + source only)..." -ForegroundColor Yellow
 # Upload config files + source in one scp call
-scp -r Dockerfile docker-compose.yml .dockerignore pyproject.toml uv.lock litellm_config.yaml .env src "root@${DropletIP}:~/cognitive-engine/"
+scp -P 1414 -r Dockerfile docker-compose.yml .dockerignore pyproject.toml uv.lock litellm_config.yaml .env src "root@${DropletIP}:~/cognitive-engine/"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: Failed to upload. Check SSH connection." -ForegroundColor Red
@@ -33,7 +33,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # --- Step 3: SSH once to install Docker and deploy ---
 Write-Host "Step 3: Deploying on droplet..." -ForegroundColor Yellow
-ssh "root@$DropletIP" @"
+ssh -p 1414 "root@$DropletIP" @"
 cd ~/cognitive-engine
 # Install Docker if not present
 if ! command -v docker &> /dev/null; then
@@ -73,4 +73,4 @@ Write-Host "Service URL: http://$DropletIP:8001" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Yellow
 Write-Host "1. Test from your browser: http://$DropletIP:8001/health" -ForegroundColor White
-Write-Host "2. View logs: ssh root@$DropletIP 'cd cognitive-engine && docker compose logs -f'" -ForegroundColor White
+Write-Host "2. View logs: ssh -p 1414 root@$DropletIP 'cd cognitive-engine && docker compose logs -f'" -ForegroundColor White
