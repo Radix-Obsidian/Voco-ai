@@ -39,7 +39,7 @@ const AppPage = () => {
   } = useVocoSocket();
 
   const { settings, updateSetting, hasRequiredKeys, pushToBackend, saveSettings } = useSettings();
-  const { session, isFounder } = useAuth();
+  const { session, isFounder, signOut } = useAuth();
   const { toast } = useToast();
   useAppUpdater();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -314,6 +314,7 @@ const AppPage = () => {
         isFounder={isFounder}
         turnCount={turnCount}
         turnLimit={FREE_TURN_LIMIT}
+        onSignOut={signOut}
       />
 
       {/* Content area — single-column or split-screen depending on sandbox state */}

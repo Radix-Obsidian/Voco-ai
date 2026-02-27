@@ -22,6 +22,8 @@ interface PricingModalProps {
   turnCount?: number;
   /** Cap for the free tier */
   turnLimit?: number;
+  /** Sign-out callback — allows users to switch accounts from the hard paywall */
+  onSignOut?: () => void;
 }
 
 const FREE_FEATURES = [
@@ -49,7 +51,7 @@ async function openInBrowser(url: string): Promise<void> {
   }
 }
 
-export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail = "", isFounder = false, turnCount = 0, turnLimit = 50 }: PricingModalProps) {
+export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail = "", isFounder = false, turnCount = 0, turnLimit = 50, onSignOut }: PricingModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -235,6 +237,19 @@ export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail
         <p className="text-center text-xs text-zinc-600 pb-1">
           Secure payment via Stripe &middot; 30-day money-back guarantee &middot; 500 Founding spots
         </p>
+
+        {/* Escape hatch: let users sign out to switch accounts even from the hard paywall */}
+        {forcedOpen && onSignOut && (
+          <div className="text-center pb-2">
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="text-xs text-zinc-500 hover:text-zinc-300 underline underline-offset-2 transition-colors"
+            >
+              Sign out and switch account
+            </button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

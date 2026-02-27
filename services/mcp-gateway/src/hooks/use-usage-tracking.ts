@@ -24,16 +24,51 @@ export interface UsageState {
   resetUsage: () => void;
 }
 
+/** Per-user localStorage key so each account has isolated usage */
+function storageKey(uid: string): string {
+  return `voco-free-turns-${uid}`;
+}
+
+function readLocalCount(uid: string | null | undefined): number {
+  if (!uid) return 0;
+  return parseInt(localStorage.getItem(storageKey(uid)) ?? "0", 10);
+}
+
+function writeLocalCount(uid: string, count: number): void {
+  localStorage.setItem(storageKey(uid), String(count));
+}
+
+/** Safe defaults returned while auth is loading or for unlimited accounts */
+const UNCAPPED: Omit<UsageState, "recordTurn" | "resetUsage"> = {
+  turnCount: 0,
+  usagePercent: 0,
+  turnsRemaining: FREE_TURN_LIMIT,
+  isCapped: false,
+  activeWarning: null,
+};
+
 export function useUsageTracking(userId: string | null | undefined, isFounder: boolean, userTier: string): UsageState {
-  const [turnCount, setTurnCount] = useState<number>(() => {
-    return parseInt(localStorage.getItem("voco-free-turns") ?? "0", 10);
-  });
+  const [turnCount, setTurnCount] = useState<number>(() => readLocalCount(userId));
 
   // Track which warnings have already fired this session to avoid repeat toasts
   const firedHalf = useRef(false);
   const firedNearCap = useRef(false);
 
-  // On mount: hydrate from Supabase for the current billing period
+  // Migrate: remove old global key that was shared across all users
+  useEffect(() => {
+    localStorage.removeItem("voco-free-turns");
+  }, []);
+
+  // When userId changes (login / logout / account switch) — reload that user's count
+  useEffect(() => {
+    const count = readLocalCount(userId);
+    setTurnCount(count);
+    // Reset warning guards for the new user
+    firedHalf.current = count >= HALF_MARK;
+    firedNearCap.current = count >= NEAR_CAP_MARK;
+  }, [userId]);
+
+  // Hydrate from Supabase for the current billing period (free users only)
   useEffect(() => {
     if (!userId || isFounder || userTier !== "free") return;
 
@@ -52,59 +87,49 @@ export function useUsageTracking(userId: string | null | undefined, isFounder: b
       .then(({ data, error }) => {
         if (error || !data) return;
         const serverCount = data.generation_count ?? 0;
-        const localCount = parseInt(localStorage.getItem("voco-free-turns") ?? "0", 10);
-        // Take the higher of the two to avoid letting users reset by clearing localStorage
+        const localCount = readLocalCount(userId);
+        // Take the higher of the two to prevent circumvention via localStorage clear
         const resolved = Math.max(serverCount, localCount);
         setTurnCount(resolved);
-        localStorage.setItem("voco-free-turns", String(resolved));
+        writeLocalCount(userId, resolved);
       });
   }, [userId, isFounder, userTier]);
 
-  // Mark warnings already fired for turn counts that existed on load
-  useEffect(() => {
-    if (turnCount >= HALF_MARK) firedHalf.current = true;
-    if (turnCount >= NEAR_CAP_MARK) firedNearCap.current = true;
-  }, []); // only on mount, intentionally
-
   const recordTurn = useCallback(async () => {
-    if (isFounder || userTier !== "free") return;
+    if (isFounder || userTier !== "free" || !userId) return;
 
     setTurnCount((prev) => {
       const next = prev + 1;
-      localStorage.setItem("voco-free-turns", String(next));
+      writeLocalCount(userId, next);
       return next;
     });
 
-    // Persist to Supabase asynchronously (fire-and-forget; localStorage is the real-time source)
-    if (userId) {
-      try {
-        await supabase.rpc("increment_usage", { p_user_id: userId });
-      } catch (err) {
-        console.warn("[usage-tracking] Supabase increment failed (offline?):", err);
-      }
+    // Persist to Supabase asynchronously (fire-and-forget)
+    try {
+      await supabase.rpc("increment_usage", { p_user_id: userId });
+    } catch (err) {
+      console.warn("[usage-tracking] Supabase increment failed (offline?):", err);
     }
   }, [userId, isFounder, userTier]);
 
   const resetUsage = useCallback(() => {
     setTurnCount(0);
-    localStorage.setItem("voco-free-turns", "0");
+    if (userId) writeLocalCount(userId, 0);
     firedHalf.current = false;
     firedNearCap.current = false;
-  }, []);
+  }, [userId]);
 
-  // For founders and paid users — no caps
-  if (isFounder || userTier !== "free") {
-    return {
-      turnCount: 0,
-      usagePercent: 0,
-      turnsRemaining: Infinity,
-      isCapped: false,
-      activeWarning: null,
-      recordTurn,
-      resetUsage,
-    };
+  // ── Safe defaults while auth is loading (userId not yet known) ──
+  if (!userId) {
+    return { ...UNCAPPED, recordTurn, resetUsage };
   }
 
+  // ── Founders and paid users — unlimited, never capped ──
+  if (isFounder || userTier !== "free") {
+    return { ...UNCAPPED, recordTurn, resetUsage };
+  }
+
+  // ── Free-tier user with known userId ──
   const usagePercent = Math.min(100, Math.round((turnCount / FREE_TURN_LIMIT) * 100));
   const turnsRemaining = Math.max(0, FREE_TURN_LIMIT - turnCount);
   const isCapped = turnCount >= FREE_TURN_LIMIT;
