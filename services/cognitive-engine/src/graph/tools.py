@@ -116,13 +116,13 @@ def github_read_issue(repo_name: str, issue_number: int) -> str:
     Returns:
         A formatted string with the issue title, labels, and body.
     """
-    from github import Github
+    from github import Auth, Github
 
     token = os.environ.get("GITHUB_TOKEN", "")
     if not token:
         return "Error: GITHUB_TOKEN environment variable is not set."
 
-    g = Github(token)
+    g = Github(auth=Auth.Token(token))
     try:
         repo = g.get_repo(repo_name)
         issue = repo.get_issue(number=issue_number)
@@ -155,13 +155,13 @@ def github_create_pr(
     Returns:
         Success message with PR number and URL, or error message.
     """
-    from github import Github
+    from github import Auth, Github
 
     token = os.environ.get("GITHUB_TOKEN", "")
     if not token:
         return "Error: GITHUB_TOKEN environment variable is not set."
 
-    g = Github(token)
+    g = Github(auth=Auth.Token(token))
     try:
         repo = g.get_repo(repo_name)
         pr = repo.create_pull(title=title, body=body, head=head_branch, base=base_branch)
@@ -372,7 +372,7 @@ def glob_find(pattern: str, project_path: str, file_type: str = "file", max_resu
 
 
 @tool
-def propose_file_edit(file_path: str, diff: str, description: str) -> dict:
+def propose_file_edit(file_path: str, diff: str, description: str, cowork_ready: bool = False) -> dict:
     """Propose editing an existing file in the user's project.
 
     Use this when the user asks you to modify, update, or fix an existing file.
@@ -382,6 +382,8 @@ def propose_file_edit(file_path: str, diff: str, description: str) -> dict:
         file_path: Relative path within the project of the file to edit.
         diff: A unified diff or clear description of the changes to make.
         description: A short human-readable summary of what this edit does.
+        cowork_ready: If True, the edit is also sent as a cowork_edit message
+            so IDE-connected users (Cursor, Windsurf, VS Code) see it inline.
 
     Returns:
         A proposal dict that will be sent to the frontend for HITL approval.
@@ -393,6 +395,7 @@ def propose_file_edit(file_path: str, diff: str, description: str) -> dict:
         "file_path": file_path,
         "diff": diff,
         "description": description,
+        "cowork_ready": cowork_ready,
     }
 
 

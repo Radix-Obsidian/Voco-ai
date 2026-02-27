@@ -1,0 +1,76 @@
+## Production compose — NGINX reverse proxy with Let's Encrypt TLS.
+##
+## First-time setup (on the droplet):
+##   1. Set DOMAIN in your .env (e.g. voco-api.yourdomain.com)
+##   2. Run:  docker compose -f docker-compose.prod.yml run --rm certbot
+##   3. Then: docker compose -f docker-compose.prod.yml up -d
+##
+## Certificate renewal (cron — runs daily, only renews when <30 days remain):
+##   0 3 * * * cd /root/cognitive-engine && docker compose -f docker-compose.prod.yml run --rm certbot renew && docker compose -f docker-compose.prod.yml exec nginx nginx -s reload
+
+services:
+  cognitive-engine:
+    build: .
+    container_name: voco-cognitive-engine
+    expose:
+      - "8001"
+    environment:
+      - LITELLM_GATEWAY_URL=${LITELLM_GATEWAY_URL}
+      - LITELLM_SESSION_TOKEN=${LITELLM_SESSION_TOKEN}
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
+      - CARTESIA_API_KEY=${CARTESIA_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-}
+      - STRIPE_METER_PRICE_ID=${STRIPE_METER_PRICE_ID:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - TTS_VOICE=${TTS_VOICE:-79a125e8-cd45-4c13-8a67-188112f4dd22}
+      - VOCO_WS_TOKEN=${VOCO_WS_TOKEN:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+      - session_data:/app/sessions
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: voco-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+      - certbot_webroot:/var/www/certbot:ro
+      - certbot_certs:/etc/letsencrypt:ro
+    environment:
+      - DOMAIN=${DOMAIN:?Set DOMAIN in .env}
+    depends_on:
+      - cognitive-engine
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: voco-certbot
+    volumes:
+      - certbot_webroot:/var/www/certbot
+      - certbot_certs:/etc/letsencrypt
+    entrypoint: >
+      certbot certonly --webroot -w /var/www/certbot
+        --email ${CERTBOT_EMAIL:?Set CERTBOT_EMAIL in .env}
+        --agree-tos --no-eff-email
+        -d ${DOMAIN:?Set DOMAIN in .env}
+
+volumes:
+  certbot_webroot:
+  certbot_certs:
+  session_data:

@@ -35,6 +35,7 @@ ALLOWED_ENV_KEYS: set[str] = {
     "GITHUB_TOKEN",
     "TTS_VOICE",
     "SUPABASE_URL",
+    "SUPABASE_ANON_KEY",
     "GOOGLE_API_KEY",
 }
 

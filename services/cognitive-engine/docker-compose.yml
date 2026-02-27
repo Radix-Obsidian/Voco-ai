@@ -5,16 +5,30 @@ services:
     ports:
       - "8001:8001"
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # LiteLLM proxy (replaces direct ANTHROPIC_API_KEY)
+      - LITELLM_GATEWAY_URL=${LITELLM_GATEWAY_URL}
+      - LITELLM_SESSION_TOKEN=${LITELLM_SESSION_TOKEN}
+      # Audio pipeline
       - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
       - CARTESIA_API_KEY=${CARTESIA_API_KEY}
+      - TTS_VOICE=${TTS_VOICE:-79a125e8-cd45-4c13-8a67-188112f4dd22}
+      # Supabase
       - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
       - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      # Stripe billing
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-}
+      - STRIPE_METER_PRICE_ID=${STRIPE_METER_PRICE_ID:-}
+      # Integrations
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-      - TTS_VOICE=${TTS_VOICE:-79a125e8-cd45-4c13-8a67-188112f4dd22}
+      # LiteLLM proxy master key
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
+      # Security
+      - VOCO_WS_TOKEN=${VOCO_WS_TOKEN:-}
     restart: unless-stopped
     volumes:
       - ./logs:/app/logs

@@ -34,18 +34,33 @@ from src.ide_mcp_server import attach_ide_mcp_routes
 from src.audio.stt import DeepgramSTT
 from src.audio.tts import CartesiaTTS
 from src.audio.vad import VocoVADStreamer, load_silero_model
-from src.graph.router import graph
+from src.graph.router import compile_graph
+from src.graph.checkpointer import get_checkpointer, prune_checkpoints
 from src.graph.tools import mcp_registry
 from src.graph.nodes import set_session_token
 from src.telemetry import init_telemetry, get_tracer, current_trace_id
 from src.errors import ErrorCode, VocoError, send_error
+from src.constants import (
+    AUDIO_MIN_BUFFER_SIZE,
+    SILENCE_FRAMES_FOR_TURN_END,
+    WEBSOCKET_RECEIVE_TIMEOUT,
+    WEBSOCKET_MESSAGE_TIMEOUT,
+    WEBSOCKET_SCAN_TIMEOUT,
+    HITL_PROPOSAL_TIMEOUT,
+    HITL_COMMAND_TIMEOUT,
+    RPC_BACKGROUND_TIMEOUT,
+    RPC_FUTURE_MAX_AGE,
+    TTS_GRACE_PERIOD,
+    TTS_TAIL_DELAY,
+    ALLOWED_ENV_KEYS,
+)
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Tauri app identifier from tauri.conf.json — used to locate config.json.
 _TAURI_APP_ID = "com.voco.mcp-gateway"
-_ALLOWED_ENV_KEYS = {"DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "GITHUB_TOKEN", "TTS_VOICE", "SUPABASE_URL", "GOOGLE_API_KEY"}
+_ALLOWED_ENV_KEYS = ALLOWED_ENV_KEYS
 
 
 # In-memory store for the current Live Sandbox HTML (single-user desktop app).
@@ -173,7 +188,7 @@ async def voco_stream(websocket: WebSocket) -> None:
     await websocket.accept()
     vad = VocoVADStreamer(
         websocket.app.state.silero_model,
-        silence_frames_for_turn_end=40,  # 40 × 32ms = 1.28s silence before turn-end (was 800ms)
+        silence_frames_for_turn_end=SILENCE_FRAMES_FOR_TURN_END,
     )
 
     stt = DeepgramSTT(api_key=os.environ.get("DEEPGRAM_API_KEY", ""))
@@ -183,6 +198,10 @@ async def voco_stream(websocket: WebSocket) -> None:
     thread_id = _new_thread_id()
     config = {"configurable": {"thread_id": thread_id}}
     logger.info("[Session] New thread: %s", thread_id)
+
+    # Per-session SQLite checkpointer — persists graph state across restarts (GAP #2).
+    _session_checkpointer = await get_checkpointer(thread_id)
+    graph = compile_graph(checkpointer=_session_checkpointer)
     tts_active = False  # Track if TTS is currently playing
 
     # Observability: send session_id to frontend so logs can be correlated
@@ -204,7 +223,7 @@ async def voco_stream(websocket: WebSocket) -> None:
     # Session-level metrics for observability (Issue #6)
     _session_metrics = {"timeout_count": 0, "rpc_count": 0, "turn_count": 0}
 
-    async def _cleanup_stale_futures(max_age_seconds: float = 300.0) -> None:
+    async def _cleanup_stale_futures(max_age_seconds: float = RPC_FUTURE_MAX_AGE) -> None:
         """Remove stale futures that have timed out or completed."""
         import time
         now = time.monotonic()
@@ -274,7 +293,7 @@ async def voco_stream(websocket: WebSocket) -> None:
         nonlocal audio_buffer, tts_active
 
         _session_metrics["turn_count"] += 1
-        await websocket.send_json({"type": "control", "action": "turn_ended"})
+        await websocket.send_json({"type": "control", "action": "turn_ended", "turn_count": _session_metrics["turn_count"]})
 
         if text_override is not None:
             # --- Text input path: skip STT ---
@@ -288,7 +307,7 @@ async def voco_stream(websocket: WebSocket) -> None:
                 return
 
             # Require a minimum buffer size to avoid transcribing noise/clicks
-            if len(audio_buffer) < 6400:  # < 200ms of audio at 16kHz mono 16-bit
+            if len(audio_buffer) < AUDIO_MIN_BUFFER_SIZE:
                 logger.info("[Pipeline] Audio buffer too small (%d bytes) — likely noise, skipping.", len(audio_buffer))
                 audio_buffer = bytearray()
                 return
@@ -340,6 +359,19 @@ async def voco_stream(websocket: WebSocket) -> None:
                     "description": p.get("description", ""),
                     "project_root": project_path,
                 })
+                # Co-work: send an additional cowork_edit message for IDE-native display
+                if p.get("cowork_ready"):
+                    await websocket.send_json({
+                        "type": "cowork_edit",
+                        "proposal_id": p.get("proposal_id", ""),
+                        "action": p.get("action", ""),
+                        "file_path": p.get("file_path", ""),
+                        "content": p.get("content", ""),
+                        "diff": p.get("diff", ""),
+                        "description": p.get("description", ""),
+                        "project_root": project_path,
+                    })
+                    logger.info("[CoWork] IDE-native edit sent for %s", p.get("file_path", ""))
 
             # TTS: announce proposals
             desc_list = [p.get("description", p.get("file_path", "")) for p in proposals]
@@ -350,14 +382,14 @@ async def voco_stream(websocket: WebSocket) -> None:
                 await websocket.send_bytes(audio_chunk)
             await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
             tts_active = False
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(TTS_GRACE_PERIOD)
             vad.reset()
             audio_buffer = bytearray()
 
             # Wait for proposal_decision from frontend (filtered receive)
             decisions = []
             try:
-                decision_msg = await _receive_filtered("proposal_decision", timeout=120.0)
+                decision_msg = await _receive_filtered("proposal_decision", timeout=HITL_PROPOSAL_TIMEOUT)
                 decisions = decision_msg.get("decisions", [])
             except asyncio.TimeoutError:
                 logger.warning("[Pipeline] Proposal decision timeout - user did not respond")
@@ -423,14 +455,14 @@ async def voco_stream(websocket: WebSocket) -> None:
                 await websocket.send_bytes(audio_chunk)
             await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
             tts_active = False
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(TTS_GRACE_PERIOD)
             vad.reset()
             audio_buffer = bytearray()
 
             # Wait for command_decision from frontend (filtered receive)
             cmd_decisions = []
             try:
-                decision_msg = await _receive_filtered("command_decision", timeout=120.0)
+                decision_msg = await _receive_filtered("command_decision", timeout=HITL_COMMAND_TIMEOUT)
                 cmd_decisions = decision_msg.get("decisions", [])
             except asyncio.TimeoutError:
                 logger.warning("[Pipeline] Command decision timeout - user did not respond")
@@ -507,7 +539,7 @@ async def voco_stream(websocket: WebSocket) -> None:
                 frames: list[str] = []
                 media_type = "image/jpeg"
                 try:
-                    raw = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+                    raw = await asyncio.wait_for(websocket.receive_text(), timeout=WEBSOCKET_MESSAGE_TIMEOUT)
                     frames_msg = json.loads(raw)
                     if frames_msg.get("type") == "screen_frames":
                         frames = frames_msg.get("frames", [])
@@ -576,7 +608,7 @@ async def voco_stream(websocket: WebSocket) -> None:
                 # 2. Await scan findings (30 s — project may have many env files)
                 findings_str = ""
                 try:
-                    raw = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                    raw = await asyncio.wait_for(websocket.receive_text(), timeout=WEBSOCKET_SCAN_TIMEOUT)
                     scan_msg = json.loads(raw)
                     if scan_msg.get("type") == "scan_security_result":
                         findings_str = json.dumps(scan_msg.get("findings", {}), indent=2)
@@ -749,7 +781,7 @@ async def voco_stream(websocket: WebSocket) -> None:
                     except Exception as send_exc:
                         return f"Failed to dispatch RPC to Tauri: {send_exc}"
                     try:
-                        raw = await asyncio.wait_for(asyncio.shield(_future), timeout=30.0)
+                        raw = await asyncio.wait_for(asyncio.shield(_future), timeout=RPC_BACKGROUND_TIMEOUT)
                         mcp_resp = json.loads(raw)
                         has_res = "result" in mcp_resp or mcp_resp.get("type") == "mcp_result"
                         return (
@@ -855,7 +887,7 @@ async def voco_stream(websocket: WebSocket) -> None:
         tts_active = False
 
         # Small grace period so mic doesn't pick up tail-end of TTS audio
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(TTS_GRACE_PERIOD)
         vad.reset()
         audio_buffer = bytearray()
 
@@ -948,9 +980,8 @@ async def voco_stream(websocket: WebSocket) -> None:
                 set_auth_jwt(_auth_token, _auth_uid, refresh_token=_refresh_token)
             elif msg_type == "update_env":
                 env_patch = payload.get("env", {})
-                allowed_keys = {"DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "GITHUB_TOKEN", "TTS_VOICE", "SUPABASE_URL"}
                 for k, v in env_patch.items():
-                    if k in allowed_keys and isinstance(v, str) and v:
+                    if k in _ALLOWED_ENV_KEYS and isinstance(v, str) and v:
                         os.environ[k] = v
             else:
                 logger.debug("[WS] Draining unexpected message while waiting for %s: %s", expected_type, msg_type)
@@ -970,7 +1001,7 @@ async def voco_stream(websocket: WebSocket) -> None:
         while True:
             try:
                 # Wait for message with 30s timeout (allows pauses during barge-in)
-                message = await asyncio.wait_for(websocket.receive(), timeout=30.0)
+                message = await asyncio.wait_for(websocket.receive(), timeout=WEBSOCKET_RECEIVE_TIMEOUT)
             except asyncio.TimeoutError:
                 logger.debug("[Pipeline] WebSocket receive timeout (audio pause) — continuing")
                 await _cleanup_stale_futures()
@@ -1030,9 +1061,8 @@ async def voco_stream(websocket: WebSocket) -> None:
                         logger.info("[WS] auth_sync: uid=%s token_len=%d", _auth_uid, len(_auth_token))
                     elif msg_type == "update_env":
                         env_patch = payload.get("env", {})
-                        allowed_keys = {"DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "GITHUB_TOKEN", "TTS_VOICE", "SUPABASE_URL"}
                         for k, v in env_patch.items():
-                            if k in allowed_keys and isinstance(v, str) and v:
+                            if k in _ALLOWED_ENV_KEYS and isinstance(v, str) and v:
                                 os.environ[k] = v
                         logger.info("[WS] Environment updated: %s", list(env_patch.keys()))
                     elif "jsonrpc" in payload and "id" in payload and "type" not in payload:
@@ -1068,3 +1098,10 @@ async def voco_stream(websocket: WebSocket) -> None:
         vad.reset()
         audio_buffer = bytearray()
         background_queue.cancel_all()
+        # Close SQLite checkpointer and prune old checkpoints (GAP #2).
+        try:
+            if _session_checkpointer and hasattr(_session_checkpointer, "conn"):
+                await _session_checkpointer.conn.close()
+            await prune_checkpoints(thread_id)
+        except Exception as cp_exc:
+            logger.warning("[Checkpointer] Cleanup error for %s: %s", thread_id, cp_exc)

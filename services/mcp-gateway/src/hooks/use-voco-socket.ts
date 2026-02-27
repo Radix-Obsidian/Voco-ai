@@ -85,8 +85,18 @@ export function useVocoSocket() {
   const [liveTranscript, setLiveTranscript] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [lastError, setLastError] = useState<{ code: string; message: string; recoverable: boolean } | null>(null);
+  // Client-side turn counting for metering validation (GAP #12)
+  const [turnCount, setTurnCount] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRequests = useRef<Map<string, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>>(new Map());
+
+  // Reconnect state (GAP #11)
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const intentionalCloseRef = useRef(false);
+  const MAX_RECONNECT_ATTEMPTS = 10;
+  const BASE_RECONNECT_DELAY_MS = 1000;
 
   const sendAudioChunk = useCallback((bytes: Uint8Array) => {
     // Suppress mic input while TTS is playing to prevent echo/feedback loop
@@ -98,6 +108,13 @@ export function useVocoSocket() {
   }, []);
 
   const disconnect = useCallback(() => {
+    intentionalCloseRef.current = true;
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    reconnectAttemptRef.current = 0;
+    setIsReconnecting(false);
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -451,6 +468,9 @@ export function useVocoSocket() {
 
     ws.onopen = () => {
       setIsConnected(true);
+      setIsReconnecting(false);
+      reconnectAttemptRef.current = 0;
+      intentionalCloseRef.current = false;
       console.log("[VocoSocket] Connected to", WS_URL);
     };
 
@@ -488,6 +508,15 @@ export function useVocoSocket() {
           } else if (msg.action === "turn_ended") {
             setBargeInActive(false);
             setLiveTranscript("");
+            // GAP #12: Client-side turn counting — sync with server count
+            const serverCount = typeof msg.turn_count === "number" ? msg.turn_count : undefined;
+            setTurnCount((prev) => {
+              const next = prev + 1;
+              if (serverCount !== undefined && serverCount !== next) {
+                console.warn(`[TurnCount] Client/server mismatch: client=${next} server=${serverCount}`);
+              }
+              return serverCount ?? next;
+            });
           } else if (msg.action === "tts_start") {
             ttsActiveRef.current = true;
             console.log("[TTS] Active — mic suppressed to prevent echo");
@@ -564,6 +593,22 @@ export function useVocoSocket() {
             ws.send(JSON.stringify({ type: "screen_frames", id: requestId, frames: [], media_type: "image/jpeg" }));
             console.warn("[VocoEyes] get_recent_frames failed:", err);
           }
+        } else if (msg.type === "cowork_edit") {
+          // Co-work integration: IDE-native file edit display
+          console.log(`[CoWork] Edit proposal for ${msg.file_path}`);
+          setProposals((prev) => [
+            ...prev,
+            {
+              proposal_id: msg.proposal_id,
+              action: msg.action ?? "edit_file",
+              file_path: msg.file_path,
+              content: msg.content,
+              diff: msg.diff,
+              description: msg.description,
+              project_root: msg.project_root,
+              status: "pending",
+            },
+          ]);
         } else if (msg.type === "sandbox_live") {
           // Phase 5: Live Sandbox — first generation
           setSandboxUrl(msg.url as string);
@@ -631,6 +676,25 @@ export function useVocoSocket() {
       setIsConnected(false);
       setLedgerState(null);
       console.log("[VocoSocket] Disconnected");
+
+      // Auto-reconnect with exponential backoff (GAP #11)
+      if (!intentionalCloseRef.current && reconnectAttemptRef.current < MAX_RECONNECT_ATTEMPTS) {
+        const attempt = reconnectAttemptRef.current;
+        const delay = Math.min(BASE_RECONNECT_DELAY_MS * Math.pow(2, attempt), 30000);
+        const jitter = Math.random() * delay * 0.3;
+        const totalDelay = Math.round(delay + jitter);
+        reconnectAttemptRef.current = attempt + 1;
+        setIsReconnecting(true);
+        console.log(`[VocoSocket] Reconnecting in ${totalDelay}ms (attempt ${attempt + 1}/${MAX_RECONNECT_ATTEMPTS})`);
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null;
+          connect();
+        }, totalDelay);
+      } else if (reconnectAttemptRef.current >= MAX_RECONNECT_ATTEMPTS) {
+        setIsReconnecting(false);
+        console.error("[VocoSocket] Max reconnect attempts reached. Manual reconnect required.");
+        toast({ title: "Connection Lost", description: "Could not reconnect to Voco engine. Click Connect to retry.", variant: "destructive" });
+      }
     };
 
     ws.onerror = () => {
@@ -642,6 +706,10 @@ export function useVocoSocket() {
 
   useEffect(() => {
     return () => {
+      intentionalCloseRef.current = true;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
       wsRef.current?.close();
     };
   }, []);
@@ -670,5 +738,7 @@ export function useVocoSocket() {
     liveTranscript,
     sessionId,
     lastError,
+    isReconnecting,
+    turnCount,
   };
 }

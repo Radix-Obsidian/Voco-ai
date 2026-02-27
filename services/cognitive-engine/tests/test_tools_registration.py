@@ -153,6 +153,23 @@ class TestOtherToolShapes:
         assert "proposal_id" in result
         assert result["action"] == "edit_file"
 
+    def test_propose_file_edit_cowork_ready_default(self):
+        result = propose_file_edit.invoke({
+            "file_path": "src/old.ts",
+            "diff": "- old\n+ new",
+            "description": "Edit file",
+        })
+        assert result.get("cowork_ready") is False
+
+    def test_propose_file_edit_cowork_ready_true(self):
+        result = propose_file_edit.invoke({
+            "file_path": "src/old.ts",
+            "diff": "- old\n+ new",
+            "description": "Edit file",
+            "cowork_ready": True,
+        })
+        assert result["cowork_ready"] is True
+
     def test_analyze_screen_shape(self):
         result = analyze_screen.invoke({"user_description": "check this bug"})
         assert result["method"] == "local/get_recent_frames"

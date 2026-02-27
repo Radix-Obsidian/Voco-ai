@@ -133,8 +133,8 @@ async def _call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 text="Error: GITHUB_TOKEN is not set. Add it in the Voco Settings modal.",
             )]
         try:
-            from github import Github
-            g = Github(token)
+            from github import Auth, Github
+            g = Github(auth=Auth.Token(token))
             repo = g.get_repo(arguments["repo_name"])
             issue = repo.get_issue(number=int(arguments["issue_number"]))
             labels = ", ".join(lbl.name for lbl in issue.labels) or "none"

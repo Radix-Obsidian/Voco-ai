@@ -182,10 +182,66 @@ sudo netstat -tulpn | grep 8001
 docker stats
 ```
 
+## Production: HTTPS/WSS via NGINX + Let's Encrypt
+
+**CRITICAL**: Never expose the cognitive engine over plain HTTP in production.
+API keys, auth tokens, and audio streams are transmitted in cleartext without TLS.
+
+### Prerequisites
+- A domain name pointing to your droplet IP (e.g. `voco-api.yourdomain.com`)
+- DNS A record: `voco-api.yourdomain.com → 146.190.121.108`
+
+### Step 1: Configure Environment
+
+Add these to your `.env` file:
+```bash
+DOMAIN=voco-api.yourdomain.com
+CERTBOT_EMAIL=your-email@example.com
+```
+
+### Step 2: Initial Certificate
+
+```bash
+# Allow HTTP/HTTPS through firewall
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+
+# Start NGINX temporarily for ACME challenge
+docker compose -f docker-compose.prod.yml up -d nginx
+
+# Obtain certificate
+docker compose -f docker-compose.prod.yml run --rm certbot
+```
+
+### Step 3: Start Production Stack
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+### Step 4: Verify
+
+```bash
+curl https://voco-api.yourdomain.com/health
+# Should return: {"status":"ok"}
+```
+
+### Step 5: Auto-Renew Certificates
+
+Add to root crontab (`crontab -e`):
+```
+0 3 * * * cd /root/cognitive-engine && docker compose -f docker-compose.prod.yml run --rm certbot renew && docker compose -f docker-compose.prod.yml exec nginx nginx -s reload
+```
+
+### Step 6: Update Desktop App
+
+Update your Tauri app's WebSocket URL:
+```
+wss://voco-api.yourdomain.com/ws/voco-stream
+```
+
 ## Next Steps
 
 Once deployed and verified:
-1. Update your desktop app's WebSocket URL to `ws://146.190.121.108:8001/ws/voco-stream`
-2. Consider setting up NGINX reverse proxy for HTTPS
-3. Set up monitoring (optional)
-4. Configure automated backups (optional)
+1. Set up monitoring (optional)
+2. Configure automated backups (optional)

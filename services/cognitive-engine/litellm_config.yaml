@@ -13,4 +13,4 @@ litellm_settings:
   drop_params: true
 
 general_settings:
-  master_key: sk-voco-local-dev
+  master_key: os.environ/LITELLM_MASTER_KEY

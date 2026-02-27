@@ -200,6 +200,41 @@ describe("WebSocket message routing logic", () => {
     });
   });
 
+  describe("Turn counting (GAP #12)", () => {
+    it("turn_ended includes turn_count from server", () => {
+      const msg = { type: "control", action: "turn_ended", turn_count: 5 };
+      expect(msg.action).toBe("turn_ended");
+      expect(msg.turn_count).toBe(5);
+      expect(typeof msg.turn_count).toBe("number");
+    });
+
+    it("turn_ended without turn_count still valid (backwards compat)", () => {
+      const msg = { type: "control", action: "turn_ended" } as Record<string, unknown>;
+      expect(msg.action).toBe("turn_ended");
+      expect(msg.turn_count).toBeUndefined();
+    });
+  });
+
+  describe("Co-work IDE integration", () => {
+    it("parses cowork_edit message with all fields", () => {
+      const msg = {
+        type: "cowork_edit",
+        proposal_id: "cw-001",
+        action: "edit_file",
+        file_path: "src/utils.ts",
+        content: "export const x = 2;",
+        diff: "- const x = 1;\n+ const x = 2;",
+        description: "Update constant value",
+        project_root: "/project",
+      };
+      expect(msg.type).toBe("cowork_edit");
+      expect(msg.proposal_id).toBe("cw-001");
+      expect(msg.action).toBe("edit_file");
+      expect(msg.file_path).toBe("src/utils.ts");
+      expect(msg.diff).toContain("const x = 2");
+    });
+  });
+
   describe("Sandbox messages", () => {
     it("parses sandbox_live with URL", () => {
       const msg = { type: "sandbox_live", url: "http://localhost:3456" };
