@@ -47,11 +47,13 @@ def get_checkpoint_path(session_id: str) -> str:
 async def get_checkpointer(session_id: str) -> AsyncSqliteSaver:
     """Create and return an ``AsyncSqliteSaver`` for the given session.
 
-    The caller is responsible for closing the saver when done (via
-    ``await saver.conn.close()`` or using it as an async context manager).
+    ``AsyncSqliteSaver.from_conn_string()`` returns an async context manager.
+    We enter it here and return the live saver instance.  The caller is
+    responsible for closing it when done (``await saver.conn.close()``).
     """
     db_path = get_checkpoint_path(session_id)
-    saver = AsyncSqliteSaver.from_conn_string(db_path)
+    ctx = AsyncSqliteSaver.from_conn_string(db_path)
+    saver = await ctx.__aenter__()
     logger.info("[Checkpointer] Opened SQLite checkpoint: %s", db_path)
     return saver
 
