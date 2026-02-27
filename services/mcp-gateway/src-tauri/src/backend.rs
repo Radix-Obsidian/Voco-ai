@@ -4,20 +4,16 @@
 //! as child processes, polls their `/health` endpoints until ready, and
 //! gracefully terminates them when the Tauri app shuts down.
 //!
-//! In **dev mode** (`cfg(debug_assertions)`) the services are assumed to be
-//! running externally — `start_services` is a no-op so `npm run dev:tauri`
-//! keeps working without double-spawning.
+//! Auto-spawns in BOTH dev and release builds.  If services are already
+//! running (e.g. via `npm run dev`), the health check detects them and
+//! skips spawning — no double-spawn.
 
 use std::sync::{Arc, Mutex};
+use std::process::{Child, Command};
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
-
-#[cfg(not(debug_assertions))]
-use std::process::{Child, Command};
-#[cfg(debug_assertions)]
-use std::process::Child;
+use tauri::{AppHandle, Emitter, Manager};
 
 // ---------------------------------------------------------------------------
 // Public state shared via Tauri's managed state
@@ -75,7 +71,6 @@ pub fn get_backend_status(state: tauri::State<'_, Arc<BackendState>>) -> Backend
 ///
 /// In release mode the services directory lives next to the Tauri resource
 /// dir, but during development it is relative to the workspace root.
-#[cfg(not(debug_assertions))]
 fn resolve_engine_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     // Prefer VOCO_ENGINE_DIR env override (useful for custom installs)
     if let Ok(dir) = std::env::var("VOCO_ENGINE_DIR") {
@@ -87,7 +82,7 @@ fn resolve_engine_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 
     // Release: resource_dir/../cognitive-engine
     if let Ok(resource) = app.path().resource_dir() {
-        let candidate = resource
+        let candidate: std::path::PathBuf = resource
             .parent()
             .unwrap_or(&resource)
             .join("services")
@@ -102,19 +97,33 @@ fn resolve_engine_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         }
     }
 
-    // Development fallback: workspace-relative
+    // Development fallback: walk up from cwd looking for the monorepo layout
     let workspace = std::env::current_dir().unwrap_or_default();
-    let dev_path = workspace
-        .parent() // src-tauri
-        .and_then(|p| p.parent()) // mcp-gateway
-        .map(|p| p.parent().unwrap_or(p).join("cognitive-engine"))
-        .unwrap_or_else(|| workspace.join("..").join("..").join("cognitive-engine"));
-    if dev_path.exists() {
-        return Ok(dev_path);
+
+    // Try common relative paths from various possible cwd locations
+    let candidates = [
+        // cwd = src-tauri → ../cognitive-engine (sibling under services/)
+        workspace.join("..").join("..").join("cognitive-engine"),
+        // cwd = mcp-gateway → ../cognitive-engine
+        workspace.join("..").join("cognitive-engine"),
+        // cwd = monorepo root → services/cognitive-engine
+        workspace.join("services").join("cognitive-engine"),
+        // cwd = services/ → cognitive-engine
+        workspace.join("cognitive-engine"),
+    ];
+
+    for c in &candidates {
+        let resolved = c.canonicalize().unwrap_or_else(|_| c.clone());
+        if resolved.exists() && resolved.join("src").join("main.py").exists() {
+            eprintln!("[Backend] Found engine at: {}", resolved.display());
+            return Ok(resolved);
+        }
     }
 
     Err(format!(
-        "Cannot locate cognitive-engine directory. Checked env VOCO_ENGINE_DIR and common paths."
+        "Cannot locate cognitive-engine directory. Checked env VOCO_ENGINE_DIR, resource_dir, and {} relative paths from {}.",
+        candidates.len(),
+        workspace.display(),
     ))
 }
 
@@ -122,76 +131,78 @@ fn resolve_engine_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 ///
 /// This runs on a background thread kicked off from `.setup()`.
 /// It updates `BackendState.status` as each service becomes healthy.
+///
+/// Both dev and release builds auto-spawn the backend so the app "just
+/// works" when launched — exactly like Claude Code.  If the services are
+/// already running externally (e.g. via `npm run dev`), the health poll
+/// detects them and skips the spawn.
 pub fn start_services(app: AppHandle, state: Arc<BackendState>) {
-    // In dev mode, services run externally via `npm run dev:engine` / `dev:litellm`.
-    #[cfg(debug_assertions)]
-    {
-        eprintln!("[Backend] Dev mode — skipping auto-spawn. Start services manually.");
-        // Still poll health so frontend knows when they're up.
-        let app_clone = app.clone();
-        let state_clone = Arc::clone(&state);
-        std::thread::spawn(move || {
-            poll_health_blocking(&state_clone, 30);
-            // Emit ready event so frontend can stop showing splash
-            let _ = app_clone.emit("backend-ready", ());
-        });
+    // --- Quick-check: is the engine already running? ---
+    if check_health_sync("http://127.0.0.1:8001/health") {
+        eprintln!("[Backend] cognitive-engine already healthy — skipping spawn.");
+        state.status.lock().unwrap().engine_ready = true;
+
+        if check_health_sync("http://127.0.0.1:4000/health") {
+            state.status.lock().unwrap().litellm_ready = true;
+            eprintln!("[Backend] LiteLLM proxy already healthy.");
+        }
+
+        let _ = app.emit("backend-ready", ());
         return;
     }
 
-    #[cfg(not(debug_assertions))]
-    {
-        let engine_dir = match resolve_engine_dir(&app) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("[Backend] {}", e);
-                let mut s = state.status.lock().unwrap();
-                s.error = Some(e);
-                let _ = app.emit("backend-ready", ());
-                return;
-            }
-        };
+    eprintln!("[Backend] Services not running — auto-spawning...");
 
-        eprintln!("[Backend] Engine dir: {}", engine_dir.display());
-
-        // --- Spawn LiteLLM proxy ---
-        let litellm_result = spawn_litellm(&engine_dir);
-        match litellm_result {
-            Ok(child) => {
-                *state.litellm_process.lock().unwrap() = Some(child);
-                eprintln!("[Backend] LiteLLM proxy spawned.");
-            }
-            Err(e) => {
-                eprintln!("[Backend] Failed to spawn LiteLLM: {}", e);
-                let mut s = state.status.lock().unwrap();
-                s.error = Some(format!("LiteLLM spawn failed: {e}"));
-            }
+    // --- Resolve the cognitive-engine directory ---
+    let engine_dir = match resolve_engine_dir(&app) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("[Backend] {}", e);
+            let mut s = state.status.lock().unwrap();
+            s.error = Some(e);
+            let _ = app.emit("backend-ready", ());
+            return;
         }
+    };
 
-        // --- Spawn cognitive-engine ---
-        let engine_result = spawn_engine(&engine_dir);
-        match engine_result {
-            Ok(child) => {
-                *state.engine_process.lock().unwrap() = Some(child);
-                eprintln!("[Backend] Cognitive-engine spawned.");
-            }
-            Err(e) => {
-                eprintln!("[Backend] Failed to spawn cognitive-engine: {}", e);
-                let mut s = state.status.lock().unwrap();
-                s.error = Some(format!("Engine spawn failed: {e}"));
-            }
+    eprintln!("[Backend] Engine dir: {}", engine_dir.display());
+
+    // --- Spawn LiteLLM proxy ---
+    let litellm_result = spawn_litellm(&engine_dir);
+    match litellm_result {
+        Ok(child) => {
+            *state.litellm_process.lock().unwrap() = Some(child);
+            eprintln!("[Backend] LiteLLM proxy spawned.");
         }
-
-        // --- Poll health endpoints ---
-        let state_clone = Arc::clone(&state);
-        let app_clone = app.clone();
-        std::thread::spawn(move || {
-            poll_health_blocking(&state_clone, 60);
-            let _ = app_clone.emit("backend-ready", ());
-        });
+        Err(e) => {
+            eprintln!("[Backend] Failed to spawn LiteLLM: {}", e);
+            // Non-fatal: engine can use direct API keys
+        }
     }
+
+    // --- Spawn cognitive-engine ---
+    let engine_result = spawn_engine(&engine_dir);
+    match engine_result {
+        Ok(child) => {
+            *state.engine_process.lock().unwrap() = Some(child);
+            eprintln!("[Backend] Cognitive-engine spawned.");
+        }
+        Err(e) => {
+            eprintln!("[Backend] Failed to spawn cognitive-engine: {}", e);
+            let mut s = state.status.lock().unwrap();
+            s.error = Some(format!("Engine spawn failed: {e}"));
+        }
+    }
+
+    // --- Poll health endpoints ---
+    let state_clone = Arc::clone(&state);
+    let app_clone = app.clone();
+    std::thread::spawn(move || {
+        poll_health_blocking(&state_clone, 60);
+        let _ = app_clone.emit("backend-ready", ());
+    });
 }
 
-#[cfg(not(debug_assertions))]
 fn spawn_engine(engine_dir: &std::path::Path) -> Result<Child, String> {
     // Try `uv run` first (preferred), fall back to `python -m uvicorn`
     let uv_path = which_executable("uv");
@@ -230,7 +241,6 @@ fn spawn_engine(engine_dir: &std::path::Path) -> Result<Child, String> {
     }
 }
 
-#[cfg(not(debug_assertions))]
 fn spawn_litellm(engine_dir: &std::path::Path) -> Result<Child, String> {
     let uv_path = which_executable("uv");
 
@@ -268,7 +278,6 @@ fn spawn_litellm(engine_dir: &std::path::Path) -> Result<Child, String> {
 }
 
 /// Locate an executable on PATH (cross-platform).
-#[cfg(not(debug_assertions))]
 fn which_executable(name: &str) -> Option<String> {
     #[cfg(target_os = "windows")]
     let cmd = Command::new("where").arg(name).output();
