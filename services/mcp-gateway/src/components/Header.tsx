@@ -36,10 +36,9 @@ interface HeaderProps {
 }
 
 const Header = ({ onOpenSettings, onOpenPricing }: HeaderProps) => {
-  const { signOut, isFounder, user } = useAuth();
+  const { signOut, isFounder, user, userTier } = useAuth();
   const { toast } = useToast();
   const [commandsOpen, setCommandsOpen] = useState(false);
-  const userTier: string = localStorage.getItem("voco-tier") ?? "free";
   const { turnCount, usagePercent, turnsRemaining } = useUsageTracking(user?.id, isFounder, userTier);
   const { workspaces, isLoading: wsLoading, createWorkspace } = useWorkspaces();
   const [activeWsId, setActiveWsId] = useState<string | null>(() => localStorage.getItem(WS_KEY));

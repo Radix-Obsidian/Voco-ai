@@ -10,6 +10,7 @@ import { OnboardingTour } from "@/components/OnboardingTour";
 import { SandboxPreview } from "@/components/SandboxPreview";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
 import { Mic, Send } from "lucide-react";
+import vocoIcon from "@/assets/voco-icon.png";
 import { useAuth } from "@/hooks/use-auth";
 import { useAppUpdater } from "@/hooks/use-app-updater";
 import { useUsageTracking, FREE_TURN_LIMIT } from "@/hooks/use-usage-tracking";
@@ -39,13 +40,11 @@ const AppPage = () => {
   } = useVocoSocket();
 
   const { settings, updateSetting, hasRequiredKeys, pushToBackend, saveSettings } = useSettings();
-  const { session, isFounder, signOut } = useAuth();
+  const { session, isFounder, signOut, userTier } = useAuth();
   const { toast } = useToast();
   useAppUpdater();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
-
-  const userTier: string = localStorage.getItem("voco-tier") ?? "free";
   const usage = useUsageTracking(session?.user?.id, isFounder, userTier);
   const { turnCount, isCapped: atTurnLimit, activeWarning, recordTurn } = usage;
   const prevTerminalOutput = useRef<TerminalOutput | null>(null);
@@ -212,11 +211,15 @@ const AppPage = () => {
               }
             `} />
 
-            {/* Mic icon */}
-            <Mic className={`
-              w-8 h-8 relative z-10 transition-colors duration-300
-              ${isListening ? "text-voco-green" : "text-zinc-500"}
-            `} />
+            {/* Raven icon */}
+            <img
+              src={vocoIcon}
+              alt="Voco"
+              className={`
+                w-10 h-10 relative z-10 transition-opacity duration-300
+                ${isListening ? "opacity-100" : "opacity-50"}
+              `}
+            />
           </button>
 
           {/* Live transcript */}

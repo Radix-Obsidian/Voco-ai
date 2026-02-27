@@ -242,6 +242,92 @@ pub async fn billing_checkout(customer_email: Option<String>) -> Result<Checkout
     Ok(CheckoutResponse { url, session_id })
 }
 
+// ---------------------------------------------------------------------------
+// IP-based signup limit — proxy check through Rust (same CORS pattern as billing)
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct IpCheckResponse {
+    pub allowed: bool,
+    pub message: String,
+}
+
+/// Check whether the current client IP is allowed to create a new free account.
+///
+/// Proxies the request to `POST http://localhost:8001/auth/check-ip` on the
+/// cognitive engine.  The Python endpoint reads the real client IP from the
+/// HTTP request and queries the `signup_ips` Supabase table.
+#[tauri::command]
+pub async fn check_signup_ip(customer_email: Option<String>) -> Result<IpCheckResponse, String> {
+    let body = serde_json::json!({
+        "email": customer_email.unwrap_or_default(),
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("http://localhost:8001/auth/check-ip")
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Backend request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(detail) = v.get("detail").and_then(|d| d.as_str()) {
+                return Err(detail.to_string());
+            }
+        }
+        return Err(format!("Backend returned HTTP {status}: {text}"));
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse IP check response: {e}"))?;
+
+    let allowed = data
+        .get("allowed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let message = data
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok(IpCheckResponse { allowed, message })
+}
+
+/// Record a successful signup's IP address in the backend.
+#[tauri::command]
+pub async fn record_signup_ip(user_id: String, customer_email: Option<String>) -> Result<(), String> {
+    let body = serde_json::json!({
+        "user_id": user_id,
+        "email": customer_email.unwrap_or_default(),
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("http://localhost:8001/auth/record-ip")
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Backend request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Backend returned HTTP {status}: {text}"));
+    }
+
+    Ok(())
+}
+
 /// Open a URL in the system default browser.
 ///
 /// Used by the PricingModal to redirect the user to Stripe Checkout or the

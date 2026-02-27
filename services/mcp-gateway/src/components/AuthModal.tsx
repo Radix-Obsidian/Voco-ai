@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { openExternalLink, EXTERNAL_LINKS } from "@/lib/external-links";
+import { invoke } from "@tauri-apps/api/core";
 
 interface AuthModalProps {
   open: boolean;
@@ -23,7 +24,27 @@ const AuthModal = ({ open, onOpenChange, defaultTab = "signin" }: AuthModalProps
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await supabase.auth.signUp({
+
+    // IP-based free account limit: check before calling Supabase signup
+    try {
+      const ipCheck = await invoke<{ allowed: boolean; message: string }>("check_signup_ip", {
+        customerEmail: email,
+      });
+      if (!ipCheck.allowed) {
+        setLoading(false);
+        toast({
+          title: "Account limit reached",
+          description: ipCheck.message || "One free account per device. Upgrade to Pro for unlimited access.",
+          variant: "destructive",
+        });
+        return;
+      }
+    } catch (ipErr) {
+      // Fail open — if the check itself errors, allow signup to proceed
+      console.warn("[AuthModal] IP check failed (allowing signup):", ipErr);
+    }
+
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: { emailRedirectTo: window.location.origin },
@@ -33,6 +54,14 @@ const AuthModal = ({ open, onOpenChange, defaultTab = "signin" }: AuthModalProps
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } else {
       toast({ title: "Check your email", description: "We sent you a verification link." });
+
+      // Record the IP after successful signup (fire-and-forget)
+      const userId = data?.user?.id;
+      if (userId) {
+        invoke("record_signup_ip", { userId, customerEmail: email }).catch((err) =>
+          console.warn("[AuthModal] Failed to record signup IP:", err)
+        );
+      }
     }
   };
 

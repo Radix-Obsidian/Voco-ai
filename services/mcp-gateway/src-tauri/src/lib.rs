@@ -47,6 +47,8 @@ pub fn run() {
             commands::open_url,
             commands::scan_security,
             commands::validate_license,
+            commands::check_signup_ip,
+            commands::record_signup_ip,
             audio::play_native_audio,
             audio::halt_native_audio,
             screen::get_recent_frames,

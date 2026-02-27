@@ -27,6 +27,7 @@ from fastapi.responses import HTMLResponse
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 
+from src.auth.routes import router as auth_router
 from src.billing.routes import router as billing_router, report_voice_turn
 from src.db import sync_ledger_to_supabase, update_ledger_node
 from src.graph.background_worker import BackgroundJobQueue
@@ -174,6 +175,7 @@ app.add_middleware(
 )
 
 attach_ide_mcp_routes(app)
+app.include_router(auth_router)
 app.include_router(billing_router)
 
 
@@ -352,10 +354,24 @@ async def voco_stream(websocket: WebSocket) -> None:
         # --- Step 2: Run LangGraph (Claude 3.5 Sonnet) ---
         await _send_ledger_update(domain="general", context_router="active", orchestrator="pending", tools="pending")
 
-        result = await graph.ainvoke(
-            {"messages": [HumanMessage(content=transcript)]},
-            config=config,
-        )
+        try:
+            result = await asyncio.wait_for(
+                graph.ainvoke(
+                    {"messages": [HumanMessage(content=transcript)]},
+                    config=config,
+                ),
+                timeout=60.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error("[Pipeline] graph.ainvoke timed out after 60s")
+            await send_error(websocket, VocoError(
+                code=ErrorCode.E_GRAPH_FAILED,
+                message="AI took too long to respond. Please try again.",
+                recoverable=True,
+                session_id=thread_id,
+            ))
+            await _send_ledger_clear()
+            return
         logger.info("[Pipeline] Graph complete. Messages: %d", len(result["messages"]))
 
         has_tools = bool(result.get("pending_mcp_action") or result.get("pending_proposals") or result.get("pending_commands"))
@@ -419,9 +435,11 @@ async def voco_stream(websocket: WebSocket) -> None:
                 decision_msg = await _receive_filtered("proposal_decision", timeout=HITL_PROPOSAL_TIMEOUT)
                 decisions = decision_msg.get("decisions", [])
             except asyncio.TimeoutError:
-                logger.warning("[Pipeline] Proposal decision timeout - user did not respond")
+                logger.warning("[Pipeline] Proposal decision timeout — auto-rejecting all proposals")
+                decisions = [{"proposal_id": p.get("proposal_id", ""), "status": "rejected"} for p in proposals]
             except Exception as exc:
                 logger.warning("[Pipeline] Proposal decision error: %s", exc)
+                decisions = [{"proposal_id": p.get("proposal_id", ""), "status": "rejected"} for p in proposals]
 
             # For approved create_file proposals, dispatch write_file to Tauri
             decision_map = {d["proposal_id"]: d for d in decisions}
@@ -492,9 +510,11 @@ async def voco_stream(websocket: WebSocket) -> None:
                 decision_msg = await _receive_filtered("command_decision", timeout=HITL_COMMAND_TIMEOUT)
                 cmd_decisions = decision_msg.get("decisions", [])
             except asyncio.TimeoutError:
-                logger.warning("[Pipeline] Command decision timeout - user did not respond")
+                logger.warning("[Pipeline] Command decision timeout — auto-rejecting all commands")
+                cmd_decisions = [{"command_id": c.get("command_id", ""), "status": "rejected"} for c in commands]
             except Exception as exc:
                 logger.warning("[Pipeline] Command decision error: %s", exc)
+                cmd_decisions = [{"command_id": c.get("command_id", ""), "status": "rejected"} for c in commands]
 
             # For approved commands, dispatch execute_command to Tauri
             for d in cmd_decisions:

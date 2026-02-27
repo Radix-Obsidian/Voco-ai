@@ -26,13 +26,21 @@ class DeepgramSTT:
         self._api_key = api_key
         self._sample_rate = sample_rate
 
-    async def transcribe_once(self, audio_bytes: bytes) -> str:
+    async def transcribe_once(self, audio_bytes: bytes, max_retries: int = 2) -> str:
         """Send a complete audio buffer to Deepgram and return the transcript.
 
         Uses the pre-recorded endpoint for simplicity when a full turn's
         audio is available after VAD fires ``on_turn_end``.
+
+        Retries up to ``max_retries`` times on transient failures (network
+        errors, 5xx responses) with exponential backoff.
         """
+        import asyncio
         import httpx
+
+        if not self._api_key:
+            logger.error("[STT] DEEPGRAM_API_KEY not set — cannot transcribe.")
+            return ""
 
         url = (
             f"https://api.deepgram.com/v1/listen"
@@ -43,20 +51,41 @@ class DeepgramSTT:
             "Authorization": f"Token {self._api_key}",
             "Content-Type": "audio/raw",
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, headers=headers, content=audio_bytes)
-            response.raise_for_status()
-            data = response.json()
 
-        try:
-            transcript: str = (
-                data["results"]["channels"][0]["alternatives"][0]["transcript"]
-            )
-            logger.info("[STT] Transcript: %s", transcript)
-            return transcript.strip()
-        except (KeyError, IndexError):
-            logger.warning("[STT] Empty or malformed Deepgram response: %s", data)
-            return ""
+        last_error: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(url, headers=headers, content=audio_bytes)
+                    response.raise_for_status()
+                    data = response.json()
+
+                try:
+                    transcript: str = (
+                        data["results"]["channels"][0]["alternatives"][0]["transcript"]
+                    )
+                    logger.info("[STT] Transcript: %s", transcript)
+                    return transcript.strip()
+                except (KeyError, IndexError):
+                    logger.warning("[STT] Empty or malformed Deepgram response: %s", data)
+                    return ""
+
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                # Don't retry client errors (4xx) — only server errors (5xx)
+                if exc.response.status_code < 500:
+                    logger.error("[STT] Deepgram client error %d: %s", exc.response.status_code, exc)
+                    return ""
+                logger.warning("[STT] Deepgram server error %d (attempt %d/%d)", exc.response.status_code, attempt + 1, max_retries + 1)
+            except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadError) as exc:
+                last_error = exc
+                logger.warning("[STT] Deepgram network error (attempt %d/%d): %s", attempt + 1, max_retries + 1, exc)
+
+            if attempt < max_retries:
+                await asyncio.sleep(1.0 * (attempt + 1))
+
+        logger.error("[STT] All %d transcription attempts failed: %s", max_retries + 1, last_error)
+        return ""
 
     async def transcribe_stream(
         self, audio_chunks: AsyncGenerator[bytes, None]

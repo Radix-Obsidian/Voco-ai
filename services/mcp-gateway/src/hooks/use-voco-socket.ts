@@ -435,6 +435,9 @@ export function useVocoSocket() {
         type: "proposal_decision",
         decisions,
       }));
+    } else {
+      toast({ title: "Connection lost", description: "Could not submit decisions — reconnecting...", variant: "destructive" });
+      console.error("[VocoSocket] Proposal decisions not sent — WebSocket closed");
     }
     setProposals([]);
   }, []);
@@ -456,6 +459,9 @@ export function useVocoSocket() {
         type: "command_decision",
         decisions,
       }));
+    } else {
+      toast({ title: "Connection lost", description: "Could not submit decisions — reconnecting...", variant: "destructive" });
+      console.error("[VocoSocket] Command decisions not sent — WebSocket closed");
     }
     setCommandProposals([]);
   }, []);
