@@ -4,6 +4,7 @@ import type { User, Session } from "@supabase/supabase-js";
 
 const FOUNDER_EMAILS = new Set([
   "autrearchitect@gmail.com",
+  "architect@viperbyproof.com",
 ]);
 
 export function useAuth() {

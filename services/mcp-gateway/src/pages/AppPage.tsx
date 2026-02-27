@@ -12,6 +12,8 @@ import { FeedbackWidget } from "@/components/FeedbackWidget";
 import { Mic, Send } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useAppUpdater } from "@/hooks/use-app-updater";
+import { useUsageTracking, FREE_TURN_LIMIT } from "@/hooks/use-usage-tracking";
+import { useToast } from "@/hooks/use-toast";
 
 const AppPage = () => {
   const {
@@ -38,17 +40,14 @@ const AppPage = () => {
 
   const { settings, updateSetting, hasRequiredKeys, pushToBackend, saveSettings } = useSettings();
   const { session, isFounder } = useAuth();
+  const { toast } = useToast();
   useAppUpdater();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
 
-  // Turn counter — persisted to localStorage, enforces 50-turn free cap
-  const FREE_TURN_LIMIT = 50;
-  const [turnCount, setTurnCount] = useState<number>(() => {
-    return parseInt(localStorage.getItem("voco-free-turns") ?? "0", 10);
-  });
   const userTier: string = localStorage.getItem("voco-tier") ?? "free";
-  const atTurnLimit = !isFounder && userTier === "free" && turnCount >= FREE_TURN_LIMIT;
+  const usage = useUsageTracking(session?.user?.id, isFounder, userTier);
+  const { turnCount, isCapped: atTurnLimit, activeWarning, recordTurn } = usage;
   const prevTerminalOutput = useRef<TerminalOutput | null>(null);
   const [mode, setMode] = useState<"speak" | "type">("speak");
   const [textInput, setTextInput] = useState("");
@@ -64,33 +63,36 @@ const AppPage = () => {
     return () => disconnect();
   }, [connect, disconnect]);
 
-  const needsKeys = !hasRequiredKeys;
-  useEffect(() => {
-    if (needsKeys) {
-      const id = requestAnimationFrame(() => setSettingsOpen(true));
-      return () => cancelAnimationFrame(id);
-    }
-  }, [needsKeys]);
+  // hasRequiredKeys is always true — audio keys are backend-bundled.
 
-  // Increment turn counter when a new AI response arrives (terminalOutput transitions to non-null)
+  // Record turn + fire upgrade warnings when a new AI response arrives
   useEffect(() => {
     if (terminalOutput !== null && prevTerminalOutput.current === null) {
-      setTurnCount((prev) => {
-        const next = prev + 1;
-        localStorage.setItem("voco-free-turns", String(next));
-        return next;
-      });
+      recordTurn();
     }
     prevTerminalOutput.current = terminalOutput;
-  }, [terminalOutput]);
+  }, [terminalOutput, recordTurn]);
 
-  // Force paywall when free user hits the limit
+  // React to usage warning levels — toast at 50%, soft modal at 10% remaining, hard paywall at cap
   useEffect(() => {
-    if (atTurnLimit) {
+    if (activeWarning === "half") {
+      toast({
+        title: "Half your free turns used",
+        description: `You've used ${FREE_TURN_LIMIT / 2} of ${FREE_TURN_LIMIT} free turns. Upgrade for unlimited access.`,
+        duration: 6000,
+      });
+    } else if (activeWarning === "near_cap") {
+      toast({
+        title: "Only 5 free turns left!",
+        description: "You're almost out of free turns. Upgrade now to keep the momentum.",
+        duration: 8000,
+      });
+      setPricingOpen(true);
+    } else if (activeWarning === "capped") {
       setPricingOpen(true);
       if (isCapturing) stopCapture();
     }
-  }, [atTurnLimit]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeWarning]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-start mic in speak mode when connected
   useEffect(() => {
@@ -170,7 +172,6 @@ const AppPage = () => {
     <main
       className={`flex flex-col items-center justify-center px-6 transition-all duration-500
         ${isSandboxActive ? "w-[420px] min-w-[340px] shrink-0 h-full" : "min-h-screen flex-1"}
-        ${!hasRequiredKeys ? "blur-sm pointer-events-none select-none opacity-50" : ""}
         ${hasSidebarContent && !isSandboxActive ? "lg:pr-[440px]" : ""}
       `}
     >
@@ -311,6 +312,8 @@ const AppPage = () => {
         forcedOpen={atTurnLimit}
         userEmail={session?.user?.email ?? ""}
         isFounder={isFounder}
+        turnCount={turnCount}
+        turnLimit={FREE_TURN_LIMIT}
       />
 
       {/* Content area — single-column or split-screen depending on sandbox state */}

@@ -23,6 +23,8 @@ import { useVocoProjects, type VocoProject } from "@/hooks/use-voco-projects";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import CommandsModal from "@/components/CommandsModal";
+import { openExternalLink, EXTERNAL_LINKS } from "@/lib/external-links";
+import { useUsageTracking, FREE_TURN_LIMIT } from "@/hooks/use-usage-tracking";
 
 const WS_KEY = "voco-active-workspace";
 const PROJ_KEY = "voco-active-project";
@@ -34,9 +36,11 @@ interface HeaderProps {
 }
 
 const Header = ({ onOpenSettings, onOpenPricing }: HeaderProps) => {
-  const { signOut } = useAuth();
+  const { signOut, isFounder, user } = useAuth();
   const { toast } = useToast();
   const [commandsOpen, setCommandsOpen] = useState(false);
+  const userTier: string = localStorage.getItem("voco-tier") ?? "free";
+  const { turnCount, usagePercent, turnsRemaining } = useUsageTracking(user?.id, isFounder, userTier);
   const { workspaces, isLoading: wsLoading, createWorkspace } = useWorkspaces();
   const [activeWsId, setActiveWsId] = useState<string | null>(() => localStorage.getItem(WS_KEY));
   const [activeProjId, setActiveProjId] = useState<string | null>(() => localStorage.getItem(PROJ_KEY));
@@ -205,8 +209,28 @@ const Header = ({ onOpenSettings, onOpenPricing }: HeaderProps) => {
         </button>
       </div>
 
-      {/* Right: Upgrade CTA + Settings + Sign Out */}
+      {/* Right: Usage pill + Upgrade CTA + Settings + Sign Out */}
       <div className="flex items-center gap-2">
+        {/* Usage indicator pill — hidden for founders and paid users */}
+        {!isFounder && userTier === "free" && (
+          <button
+            onClick={onOpenPricing}
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+              usagePercent >= 90
+                ? "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20"
+                : usagePercent >= 50
+                  ? "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
+                  : "bg-voco-green/10 border-voco-green/20 text-voco-green hover:bg-voco-green/20"
+            }`}
+            title={`${turnCount} / ${FREE_TURN_LIMIT} free turns used`}
+          >
+            <div className={`w-1 h-1 rounded-full ${
+              usagePercent >= 90 ? "bg-red-400" : usagePercent >= 50 ? "bg-amber-400" : "bg-voco-green"
+            }`} />
+            {turnsRemaining} turns left
+          </button>
+        )}
+
         <Button
           onClick={onOpenPricing}
           size="sm"
@@ -217,15 +241,39 @@ const Header = ({ onOpenSettings, onOpenPricing }: HeaderProps) => {
           Upgrade
         </Button>
 
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setCommandsOpen(true)}
-          className="text-zinc-500 hover:text-zinc-300 h-8 w-8"
-          title="Voice Commands (Ctrl+?)"
-        >
-          <HelpCircle className="h-4 w-4" />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-zinc-500 hover:text-zinc-300 h-8 w-8"
+              title="Help & Documentation"
+            >
+              <HelpCircle className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="bg-zinc-900 border-zinc-700 text-zinc-200 min-w-[160px]">
+            <DropdownMenuItem
+              onClick={() => setCommandsOpen(true)}
+              className="text-xs cursor-pointer"
+            >
+              Voice Commands
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="bg-zinc-700" />
+            <DropdownMenuItem
+              onClick={() => openExternalLink(EXTERNAL_LINKS.docs)}
+              className="text-xs cursor-pointer"
+            >
+              Documentation
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => openExternalLink(EXTERNAL_LINKS.website)}
+              className="text-xs cursor-pointer"
+            >
+              Visit Website
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <Button
           variant="ghost"

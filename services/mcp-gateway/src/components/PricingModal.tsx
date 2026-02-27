@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Check, Zap, Loader2, Lock, MonitorPlay, ShieldCheck } from "lucide-react";
+import vocoIcon from "@/assets/voco-icon.png";
 import {
   Dialog,
   DialogContent,
@@ -17,6 +18,10 @@ interface PricingModalProps {
   userEmail?: string;
   /** Founder accounts bypass the paywall entirely */
   isFounder?: boolean;
+  /** Turns consumed so far (used for the progress bar) */
+  turnCount?: number;
+  /** Cap for the free tier */
+  turnLimit?: number;
 }
 
 const FREE_FEATURES = [
@@ -44,7 +49,7 @@ async function openInBrowser(url: string): Promise<void> {
   }
 }
 
-export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail = "", isFounder = false }: PricingModalProps) {
+export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail = "", isFounder = false, turnCount = 0, turnLimit = 50 }: PricingModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -57,19 +62,31 @@ export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail
     setLoading(true);
     setError("");
     try {
-      const resp = await fetch("http://localhost:8001/billing/create-checkout-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customer_email: userEmail }),
-      });
+      let checkoutUrl: string;
 
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        throw new Error((body as { detail?: string }).detail ?? `HTTP ${resp.status}`);
+      if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+        // Route through Rust to bypass CORS (Tauri webview → localhost is cross-origin)
+        const { invoke } = await import("@tauri-apps/api/core");
+        const result = await invoke<{ url: string; session_id: string }>("billing_checkout", {
+          customerEmail: userEmail || null,
+        });
+        checkoutUrl = result.url;
+      } else {
+        // Fallback for plain browser dev mode
+        const resp = await fetch("http://localhost:8001/billing/create-checkout-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customer_email: userEmail }),
+        });
+        if (!resp.ok) {
+          const body = await resp.json().catch(() => ({}));
+          throw new Error((body as { detail?: string }).detail ?? `HTTP ${resp.status}`);
+        }
+        const data = (await resp.json()) as { url: string };
+        checkoutUrl = data.url;
       }
 
-      const { url } = (await resp.json()) as { url: string };
-      await openInBrowser(url);
+      await openInBrowser(checkoutUrl);
       onOpenChange(false);
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
@@ -86,8 +103,12 @@ export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail
         onEscapeKeyDown={forcedOpen ? (e) => e.preventDefault() : undefined}
       >
         <DialogHeader>
+          <div className="flex items-center gap-3 mb-1">
+            <img src={vocoIcon} alt="Voco" className="h-8 w-auto rounded" />
+            {isFounder && <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">FOUNDER</span>}
+            {forcedOpen && !isFounder && <Lock className="h-4 w-4 text-voco-green" />}
+          </div>
           <DialogTitle className="flex items-center gap-2 text-zinc-100 text-xl">
-            {isFounder ? <ShieldCheck className="h-5 w-5 text-emerald-400" /> : forcedOpen ? <Lock className="h-5 w-5 text-voco-green" /> : <Zap className="h-5 w-5 text-voco-cyan" />}
             {isFounder ? "Founder Access" : forcedOpen ? "Sandbox Limit Reached" : "Upgrade Voco"}
           </DialogTitle>
           <DialogDescription className="text-zinc-400">
@@ -111,6 +132,29 @@ export function PricingModal({ open, onOpenChange, forcedOpen = false, userEmail
                 <span className="text-sm text-zinc-500">/ forever</span>
               </div>
             </div>
+
+            {/* Usage progress bar */}
+            {!isFounder && (() => {
+              const pct = Math.min(100, Math.round((turnCount / turnLimit) * 100));
+              const remaining = Math.max(0, turnLimit - turnCount);
+              const barColor = pct >= 90 ? "bg-red-500" : pct >= 50 ? "bg-amber-400" : "bg-voco-green";
+              return (
+                <div className="mb-4">
+                  <div className="flex justify-between text-xs text-zinc-500 mb-1.5">
+                    <span>{turnCount} / {turnLimit} turns used</span>
+                    <span className={pct >= 90 ? "text-red-400" : pct >= 50 ? "text-amber-400" : "text-zinc-400"}>
+                      {remaining} left
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })()}
 
             <ul className="space-y-2.5 flex-1 mb-5">
               {FREE_FEATURES.map((f) => (

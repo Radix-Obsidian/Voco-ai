@@ -5,7 +5,7 @@
   "identifier": "com.voco.mcp-gateway",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:8080?demo=true",
+    "devUrl": "http://localhost:8080",
     "beforeDevCommand": "npm run dev:frontend",
     "beforeBuildCommand": "npm run build"
   },

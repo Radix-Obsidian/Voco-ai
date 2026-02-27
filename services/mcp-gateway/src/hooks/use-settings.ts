@@ -23,9 +23,6 @@ async function _nativeSave(settings: VocoSettings): Promise<void> {
 }
 
 export interface VocoSettings {
-  // Audio & voice settings
-  DEEPGRAM_API_KEY: string;
-  CARTESIA_API_KEY: string;
   GITHUB_TOKEN: string;
   TTS_VOICE: string;
 }
@@ -33,8 +30,6 @@ export interface VocoSettings {
 const STORAGE_KEY = "voco-settings";
 
 const DEFAULT_SETTINGS: VocoSettings = {
-  DEEPGRAM_API_KEY: "",
-  CARTESIA_API_KEY: "",
   GITHUB_TOKEN: "",
   TTS_VOICE: "british-professional",
 };
@@ -81,9 +76,7 @@ export function useSettings() {
     setSettings({ ...DEFAULT_SETTINGS });
   }, []);
 
-  const hasRequiredKeys =
-    settings.DEEPGRAM_API_KEY.length > 0 &&
-    settings.CARTESIA_API_KEY.length > 0;
+  const hasRequiredKeys = true;
 
   /**
    * Push the current keys to the Python cognitive engine over the WebSocket.
@@ -97,8 +90,6 @@ export function useSettings() {
         JSON.stringify({
           type: "update_env",
           env: {
-            DEEPGRAM_API_KEY: settings.DEEPGRAM_API_KEY,
-            CARTESIA_API_KEY: settings.CARTESIA_API_KEY,
             GITHUB_TOKEN: settings.GITHUB_TOKEN,
             TTS_VOICE: settings.TTS_VOICE,
           },

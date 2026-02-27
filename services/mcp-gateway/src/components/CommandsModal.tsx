@@ -10,6 +10,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { VOICE_COMMANDS, type VoiceCommand } from "@/data/voice-commands";
+import { openExternalLink, EXTERNAL_LINKS } from "@/lib/external-links";
 
 interface CommandsModalProps {
   open: boolean;
@@ -142,7 +143,7 @@ const CommandsModal = ({ open, onOpenChange }: CommandsModalProps) => {
         </div>
 
         {/* Footer hint */}
-        <div className="pt-2 border-t border-zinc-800 text-center">
+        <div className="pt-2 border-t border-zinc-800 flex items-center justify-between">
           <span className="text-[10px] text-zinc-600">
             Press{" "}
             <kbd className="px-1 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono text-[10px]">
@@ -150,6 +151,13 @@ const CommandsModal = ({ open, onOpenChange }: CommandsModalProps) => {
             </kbd>{" "}
             to toggle &middot; Click a command to copy
           </span>
+          <button
+            type="button"
+            onClick={() => openExternalLink(EXTERNAL_LINKS.website)}
+            className="text-[10px] text-voco-cyan hover:text-voco-cyan/80 underline underline-offset-2 transition-colors"
+          >
+            Visit Website
+          </button>
         </div>
       </DialogContent>
     </Dialog>

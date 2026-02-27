@@ -179,8 +179,68 @@ pub async fn sync_ide_config() -> Result<Vec<IdeSyncResult>, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Billing — open Stripe Checkout / Portal URLs in the system browser
+// Billing — proxy checkout through Rust to bypass CORS
 // ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct CheckoutResponse {
+    pub url: String,
+    pub session_id: String,
+}
+
+/// Proxy the Stripe checkout session creation through Rust.
+///
+/// The Tauri webview origin (`https://tauri.localhost`) cannot make cross-origin
+/// fetch() calls to `http://localhost:8001` without CORS issues.  By routing
+/// through Rust's reqwest, we bypass browser security entirely.
+#[tauri::command]
+pub async fn billing_checkout(customer_email: Option<String>) -> Result<CheckoutResponse, String> {
+    let body = serde_json::json!({
+        "customer_email": customer_email.unwrap_or_default(),
+        "success_url": "http://localhost:1420",
+        "cancel_url": "http://localhost:1420"
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("http://localhost:8001/billing/create-checkout-session")
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Backend request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        // Try to extract "detail" from FastAPI error response
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(detail) = v.get("detail").and_then(|d| d.as_str()) {
+                return Err(detail.to_string());
+            }
+        }
+        return Err(format!("Backend returned HTTP {status}: {text}"));
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse checkout response: {e}"))?;
+
+    let url = data
+        .get("url")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "No checkout URL in response".to_string())?
+        .to_string();
+
+    let session_id = data
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok(CheckoutResponse { url, session_id })
+}
 
 /// Open a URL in the system default browser.
 ///

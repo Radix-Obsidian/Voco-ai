@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import vocoLogo from "@/assets/voco-logo.jpg";
 
 interface SplashScreenProps {
   error: string | null;
@@ -32,10 +33,8 @@ const SplashScreen = ({ error, onRetry, minDisplayTime = 0, onReady }: SplashScr
     <div className={`flex items-center justify-center min-h-screen bg-zinc-950 text-white transition-opacity duration-500 ${fadingOut ? "opacity-0" : "opacity-100"}`}>
       <div className="text-center space-y-6 max-w-md px-8">
         {/* Logo / Brand */}
-        <div className="space-y-2">
-          <h1 className="text-4xl font-bold tracking-tight bg-gradient-to-r from-violet-400 to-indigo-400 bg-clip-text text-transparent">
-            Voco
-          </h1>
+        <div className="space-y-3">
+          <img src={vocoLogo} alt="Voco" className="h-20 mx-auto rounded-lg" />
           <p className="text-zinc-500 text-sm font-medium">The Intent OS</p>
         </div>
 
@@ -61,7 +60,7 @@ const SplashScreen = ({ error, onRetry, minDisplayTime = 0, onReady }: SplashScr
             {onRetry && (
               <button
                 onClick={onRetry}
-                className="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium rounded-lg transition-colors"
+                className="px-4 py-2 bg-gradient-to-r from-voco-green to-voco-cyan hover:opacity-90 text-white text-sm font-medium rounded-lg transition-colors"
               >
                 Retry
               </button>
@@ -72,7 +71,7 @@ const SplashScreen = ({ error, onRetry, minDisplayTime = 0, onReady }: SplashScr
           <div className="space-y-4">
             {/* Spinner */}
             <div className="flex justify-center">
-              <div className="w-8 h-8 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin" />
+              <div className="w-8 h-8 border-2 border-voco-cyan/30 border-t-voco-cyan rounded-full animate-spin" />
             </div>
             <p className="text-zinc-400 text-sm">
               Initializing Voco{dots}

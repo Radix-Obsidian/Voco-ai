@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { openExternalLink, EXTERNAL_LINKS } from "@/lib/external-links";
 
 interface AuthModalProps {
   open: boolean;
@@ -73,6 +74,17 @@ const AuthModal = ({ open, onOpenChange, defaultTab = "signin" }: AuthModalProps
               : "Sign in to your Voco account."}
           </DialogDescription>
         </DialogHeader>
+        {defaultTab === "signup" && (
+          <div className="text-center text-xs text-muted-foreground">
+            <button
+              type="button"
+              onClick={() => openExternalLink(EXTERNAL_LINKS.features)}
+              className="text-voco-cyan hover:text-voco-cyan/80 underline underline-offset-2 transition-colors"
+            >
+              Learn more about Voco
+            </button>
+          </div>
+        )}
 
         <Button
           variant="outline"

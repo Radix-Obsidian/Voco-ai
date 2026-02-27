@@ -43,6 +43,7 @@ pub fn run() {
             commands::sync_ide_config,
             commands::save_api_keys,
             commands::load_api_keys,
+            commands::billing_checkout,
             commands::open_url,
             commands::scan_security,
             commands::validate_license,

@@ -166,6 +166,7 @@ app.add_middleware(
         "http://localhost:8080",
         "http://localhost:1420",
         "tauri://localhost",
+        "https://tauri.localhost",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -206,7 +207,11 @@ async def voco_stream(websocket: WebSocket) -> None:
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
-    await websocket.accept()
+    try:
+        await websocket.accept()
+    except Exception as accept_exc:
+        logger.error("[WS] Failed to accept WebSocket: %s", accept_exc)
+        return
     vad = VocoVADStreamer(
         websocket.app.state.silero_model,
         silence_frames_for_turn_end=SILENCE_FRAMES_FOR_TURN_END,
@@ -1119,6 +1124,13 @@ async def voco_stream(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         logger.info("Client disconnected")
         debug_logger.log_ws_event("disconnect", thread_id, {"reason": "client_initiated"})
+    except Exception as ws_exc:
+        logger.error("[WS] Unhandled exception in voco_stream — code 1006 prevented: %s", ws_exc, exc_info=True)
+        debug_logger.log_ws_event("error", thread_id, {"reason": str(ws_exc)})
+        try:
+            await websocket.close(code=1011, reason="Internal server error")
+        except Exception:
+            pass
     finally:
         cleanup_task.cancel()
         logger.info(

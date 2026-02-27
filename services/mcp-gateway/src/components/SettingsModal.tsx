@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import type { VocoSettings } from "@/hooks/use-settings";
 import { TTS_VOICES } from "@/hooks/use-settings";
+import { openExternalLink, EXTERNAL_LINKS } from "@/lib/external-links";
 
 interface IdeSyncResult {
   ide: string;
@@ -117,25 +118,11 @@ export function SettingsModal({
             Voco Settings
           </DialogTitle>
           <DialogDescription className="text-zinc-400">
-            Audio & Voice Settings. Keys are stored locally on your device.
+            Voice &amp; IDE preferences. Audio keys are managed by Voco's backend.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          <KeyField
-            id="deepgram"
-            label="Deepgram API Key"
-            value={settings.DEEPGRAM_API_KEY}
-            placeholder="dg-..."
-            onChange={(v) => onUpdate("DEEPGRAM_API_KEY", v)}
-          />
-          <KeyField
-            id="cartesia"
-            label="Cartesia API Key"
-            value={settings.CARTESIA_API_KEY}
-            placeholder="cart-..."
-            onChange={(v) => onUpdate("CARTESIA_API_KEY", v)}
-          />
           <KeyField
             id="github"
             label="GitHub Token (optional)"
@@ -212,7 +199,23 @@ export function SettingsModal({
             )}
           </div>
 
-        <DialogFooter>
+        <div className="flex items-center justify-between text-xs text-zinc-500 pt-2 border-t border-zinc-800">
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => openExternalLink(EXTERNAL_LINKS.docs)}
+              className="text-voco-cyan hover:text-voco-cyan/80 underline underline-offset-2 transition-colors"
+            >
+              Documentation
+            </button>
+            <button
+              type="button"
+              onClick={() => openExternalLink(EXTERNAL_LINKS.website)}
+              className="text-voco-cyan hover:text-voco-cyan/80 underline underline-offset-2 transition-colors"
+            >
+              Website
+            </button>
+          </div>
           <Button
             onClick={() => {
               onSave();
@@ -223,7 +226,7 @@ export function SettingsModal({
             <Save className="h-4 w-4 mr-2" />
             Save & Apply
           </Button>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
