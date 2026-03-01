@@ -31,23 +31,17 @@ export function useAuth() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Fetch tier from Supabase (source of truth) whenever user changes
+  // Tier is pushed from the backend over WebSocket (user_info message)
+  // and written to localStorage. Listen for storage events to stay in sync.
   useEffect(() => {
-    if (!user?.email) return;
-
-    supabase
-      .from("users")
-      .select("tier")
-      .eq("email", user.email)
-      .limit(1)
-      .single()
-      .then(({ data, error }) => {
-        if (error || !data) return;
-        const tier = (data as { tier?: string }).tier || "free";
-        setUserTier(tier);
-        localStorage.setItem("voco-tier", tier);
-      });
-  }, [user?.email]);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "voco-tier" && e.newValue) {
+        setUserTier(e.newValue);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   const signOut = async () => {
     await supabase.auth.signOut();

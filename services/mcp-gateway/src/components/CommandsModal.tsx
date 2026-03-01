@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { Search, Copy, Check, Command } from "lucide-react";
+import { formatCombo } from "@/hooks/use-keybindings";
 import {
   Dialog,
   DialogContent,
@@ -15,23 +16,12 @@ import { openExternalLink, EXTERNAL_LINKS } from "@/lib/external-links";
 interface CommandsModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  voiceCommandsBinding?: string;
 }
 
-const CommandsModal = ({ open, onOpenChange }: CommandsModalProps) => {
+const CommandsModal = ({ open, onOpenChange, voiceCommandsBinding }: CommandsModalProps) => {
   const [filter, setFilter] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  // Keyboard shortcut: Ctrl+? / Cmd+? to toggle
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "?") {
-        e.preventDefault();
-        onOpenChange(!open);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [open, onOpenChange]);
 
   // Reset filter when modal opens
   useEffect(() => {
@@ -145,11 +135,16 @@ const CommandsModal = ({ open, onOpenChange }: CommandsModalProps) => {
         {/* Footer hint */}
         <div className="pt-2 border-t border-zinc-800 flex items-center justify-between">
           <span className="text-[10px] text-zinc-600">
-            Press{" "}
-            <kbd className="px-1 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono text-[10px]">
-              Ctrl+?
-            </kbd>{" "}
-            to toggle &middot; Click a command to copy
+            {voiceCommandsBinding ? (
+              <>
+                Press{" "}
+                <kbd className="px-1 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono text-[10px]">
+                  {formatCombo(voiceCommandsBinding)}
+                </kbd>{" "}
+                to toggle &middot;{" "}
+              </>
+            ) : null}
+            Click a command to copy
           </span>
           <button
             type="button"

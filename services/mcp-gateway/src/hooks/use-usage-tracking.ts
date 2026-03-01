@@ -76,23 +76,23 @@ export function useUsageTracking(userId: string | null | undefined, isFounder: b
     periodStart.setDate(1);
     periodStart.setHours(0, 0, 0, 0);
 
-    supabase
-      .from("usage_tracking")
+    // usage_tracking table may not exist yet — fail silently and rely on localStorage
+    (supabase.from as any)("usage_tracking")
       .select("generation_count")
       .eq("user_id", userId)
       .gte("period_start", periodStart.toISOString())
       .order("period_start", { ascending: false })
       .limit(1)
       .single()
-      .then(({ data, error }) => {
+      .then(({ data, error }: { data: any; error: any }) => {
         if (error || !data) return;
         const serverCount = data.generation_count ?? 0;
         const localCount = readLocalCount(userId);
-        // Take the higher of the two to prevent circumvention via localStorage clear
         const resolved = Math.max(serverCount, localCount);
         setTurnCount(resolved);
         writeLocalCount(userId, resolved);
-      });
+      })
+      .catch(() => {});
   }, [userId, isFounder, userTier]);
 
   const recordTurn = useCallback(async () => {
@@ -105,10 +105,11 @@ export function useUsageTracking(userId: string | null | undefined, isFounder: b
     });
 
     // Persist to Supabase asynchronously (fire-and-forget)
+    // increment_usage RPC may not exist yet — localStorage is the primary source
     try {
-      await supabase.rpc("increment_usage", { p_user_id: userId });
-    } catch (err) {
-      console.warn("[usage-tracking] Supabase increment failed (offline?):", err);
+      await (supabase.rpc as any)("increment_usage", { p_user_id: userId });
+    } catch {
+      // Silently ignore — localStorage tracks usage until Supabase table is created
     }
   }, [userId, isFounder, userTier]);
 

@@ -3,14 +3,6 @@
     "fetch": {
       "command": "uvx",
       "args": ["mcp-server-fetch"]
-    },
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem"]
-    },
-    "synapse": {
-      "command": "binaries/synapse-mcp",
-      "args": []
     }
   }
 }

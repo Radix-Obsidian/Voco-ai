@@ -6,6 +6,7 @@ The ONNX model file is downloaded once on first run (~2MB) and cached locally.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import Awaitable, Callable
@@ -167,6 +168,7 @@ class VocoVADStreamer:
         self._silence_frames: int = 0
         self._is_speaking: bool = False
         self._barge_in_fired: bool = False
+        self._suppressed: bool = False
 
         # Async callbacks — wired by the WebSocket endpoint
         self.on_barge_in: Callable[[], Awaitable[None]] | None = None
@@ -176,9 +178,18 @@ class VocoVADStreamer:
     # Public API
     # ------------------------------------------------------------------
 
+    def suppress(self, active: bool) -> None:
+        """Suppress VAD processing (e.g. during TTS playback to prevent echo)."""
+        self._suppressed = active
+        if active:
+            self._reset_turn_state()
+            self._buffer = b""
+
     async def process_chunk(self, raw_bytes: bytes) -> None:
         """Append *raw_bytes* (PCM-16 LE, mono, 16 kHz) and run VAD on every
         complete 512-sample frame that can be extracted from the buffer."""
+        if self._suppressed:
+            return
         self._buffer += raw_bytes
 
         while len(self._buffer) >= self.CHUNK_BYTES:
@@ -200,7 +211,7 @@ class VocoVADStreamer:
                     self._is_speaking = True
                     if not self._barge_in_fired and self.on_barge_in is not None:
                         self._barge_in_fired = True
-                        await self.on_barge_in()
+                        asyncio.create_task(self._safe_callback(self.on_barge_in, "on_barge_in"))
             else:
                 self._silence_frames += 1
                 self._speech_frames = 0
@@ -208,18 +219,27 @@ class VocoVADStreamer:
                 if self._is_speaking and self._silence_frames >= self._silence_frames_for_turn_end:
                     self._is_speaking = False
                     if self.on_turn_end is not None:
-                        await self.on_turn_end()
+                        asyncio.create_task(self._safe_callback(self.on_turn_end, "on_turn_end"))
                     self._reset_turn_state()
 
     def reset(self) -> None:
         """Reset all streaming state for a new turn."""
         self._buffer = b""
+        self._suppressed = False
         self._reset_turn_state()
         self._model.reset_states()
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _safe_callback(coro_fn: Callable[[], Awaitable[None]], name: str) -> None:
+        """Run a callback with error handling so fire-and-forget tasks don't crash silently."""
+        try:
+            await coro_fn()
+        except Exception:
+            logger.exception("[VAD] Error in %s callback", name)
 
     def _reset_turn_state(self) -> None:
         self._speech_frames = 0

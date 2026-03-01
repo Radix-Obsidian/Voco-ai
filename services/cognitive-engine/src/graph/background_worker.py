@@ -63,6 +63,15 @@ class BackgroundJobQueue:
         """Return the total number of jobs that ended with a timeout."""
         return self._timeout_count
 
+    def cancel_job(self, job_id: str) -> bool:
+        """Cancel a single background job by ID. Returns True if found."""
+        task = self._tasks.get(job_id)
+        if task and not task.done():
+            task.cancel()
+            logger.info("[BackgroundQueue] Job %s cancelled by user.", job_id)
+            return True
+        return False
+
     def cancel_all(self) -> None:
         """Cancel every pending background job (e.g. on session shutdown)."""
         for task in list(self._tasks.values()):
@@ -78,15 +87,21 @@ class BackgroundJobQueue:
         job_id: str,
         coro: Coroutine[Any, Any, Any],
         on_complete: Callable[[str, str], Coroutine[Any, Any, None]],
+        *,
+        timeout: float = 30.0,
     ) -> None:
         """Internal runner — always fires *on_complete*, even on failure."""
         try:
-            result = await coro
+            result = await asyncio.wait_for(coro, timeout=timeout)
             result_str = str(result)
             if "timed out" in result_str.lower():
                 self._timeout_count += 1
             logger.info("[BackgroundQueue] Job %s completed successfully.", job_id)
             await on_complete(job_id, result_str)
+        except asyncio.TimeoutError:
+            self._timeout_count += 1
+            logger.warning("[BackgroundQueue] Job %s timed out after %.0fs.", job_id, timeout)
+            await on_complete(job_id, f"Job {job_id} timed out after {timeout:.0f} seconds.")
         except asyncio.CancelledError:
             logger.warning("[BackgroundQueue] Job %s was cancelled.", job_id)
             await on_complete(job_id, f"Job {job_id} was cancelled before completion.")

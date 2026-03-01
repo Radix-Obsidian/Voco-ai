@@ -47,13 +47,16 @@ def get_checkpoint_path(session_id: str) -> str:
 async def get_checkpointer(session_id: str) -> AsyncSqliteSaver:
     """Create and return an ``AsyncSqliteSaver`` for the given session.
 
-    ``AsyncSqliteSaver.from_conn_string()`` returns an async context manager.
-    We enter it here and return the live saver instance.  The caller is
+    Uses ``aiosqlite.connect()`` directly to avoid double-enter issues with
+    the context manager returned by ``from_conn_string()``.  The caller is
     responsible for closing it when done (``await saver.conn.close()``).
     """
+    import aiosqlite
+
     db_path = get_checkpoint_path(session_id)
-    ctx = AsyncSqliteSaver.from_conn_string(db_path)
-    saver = await ctx.__aenter__()
+    conn = await aiosqlite.connect(db_path)
+    saver = AsyncSqliteSaver(conn)
+    await saver.setup()
     logger.info("[Checkpointer] Opened SQLite checkpoint: %s", db_path)
     return saver
 

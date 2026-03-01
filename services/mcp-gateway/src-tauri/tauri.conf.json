@@ -42,8 +42,7 @@
       "binaries/rg"
     ],
     "resources": [
-      "resources/uv/*",
-      "resources/cognitive-engine/**/*"
+      "resources/**/*"
     ],
     "createUpdaterArtifacts": true
   },

@@ -156,14 +156,18 @@ class UniversalMCPRegistry:
             # Build a closure that calls the tool on this specific session
             def _make_invoker(tool_name: str = mcp_tool.name, sess: ClientSession = session):
                 async def _invoke(**kwargs: Any) -> str:
+                    import asyncio as _aio
                     try:
-                        result = await sess.call_tool(tool_name, arguments=kwargs)
-                        
+                        result = await _aio.wait_for(
+                            sess.call_tool(tool_name, arguments=kwargs),
+                            timeout=30.0,
+                        )
+
                         # Handle MCP's native error flag
                         if getattr(result, "isError", False):
                             texts = [b.text for b in result.content if hasattr(b, "text")]
                             return f"Tool returned an error: {' '.join(texts)}"
-                            
+
                         # Concatenate all text content blocks
                         parts = []
                         for block in result.content:
@@ -172,10 +176,11 @@ class UniversalMCPRegistry:
                             else:
                                 parts.append(f"[{block.type} content]")
                         return "\n".join(parts) if parts else "(no output)"
+                    except _aio.TimeoutError:
+                        logger.warning("[MCP Tool] %s timed out after 30s", tool_name)
+                        return f"Tool {tool_name} timed out after 30 seconds."
                     except Exception as e:
-                        import logging
-                        logging.getLogger(__name__).error(f"[MCP Tool Error] {tool_name} failed: {e}")
-                        # Return string so LangGraph wraps it in a valid ToolMessage
+                        logger.error("[MCP Tool Error] %s failed: %s", tool_name, e)
                         return f"Error executing tool {tool_name}: {str(e)}. Please inform the user."
                 return _invoke
 

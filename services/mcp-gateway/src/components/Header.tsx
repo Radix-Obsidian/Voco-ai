@@ -33,12 +33,14 @@ interface HeaderProps {
   onOpenHistory?: () => void;
   onOpenSettings?: () => void;
   onOpenPricing?: () => void;
+  commandsOpen: boolean;
+  onCommandsOpenChange: (open: boolean) => void;
+  voiceCommandsBinding?: string;
 }
 
-const Header = ({ onOpenSettings, onOpenPricing }: HeaderProps) => {
+const Header = ({ onOpenSettings, onOpenPricing, commandsOpen, onCommandsOpenChange, voiceCommandsBinding }: HeaderProps) => {
   const { signOut, isFounder, user, userTier } = useAuth();
   const { toast } = useToast();
-  const [commandsOpen, setCommandsOpen] = useState(false);
   const { turnCount, usagePercent, turnsRemaining } = useUsageTracking(user?.id, isFounder, userTier);
   const { workspaces, isLoading: wsLoading, createWorkspace } = useWorkspaces();
   const [activeWsId, setActiveWsId] = useState<string | null>(() => localStorage.getItem(WS_KEY));
@@ -253,7 +255,7 @@ const Header = ({ onOpenSettings, onOpenPricing }: HeaderProps) => {
           </DropdownMenuTrigger>
           <DropdownMenuContent className="bg-zinc-900 border-zinc-700 text-zinc-200 min-w-[160px]">
             <DropdownMenuItem
-              onClick={() => setCommandsOpen(true)}
+              onClick={() => onCommandsOpenChange(true)}
               className="text-xs cursor-pointer"
             >
               Voice Commands
@@ -294,7 +296,7 @@ const Header = ({ onOpenSettings, onOpenPricing }: HeaderProps) => {
         </Button>
       </div>
 
-      <CommandsModal open={commandsOpen} onOpenChange={setCommandsOpen} />
+      <CommandsModal open={commandsOpen} onOpenChange={onCommandsOpenChange} voiceCommandsBinding={voiceCommandsBinding} />
     </header>
   );
 };
