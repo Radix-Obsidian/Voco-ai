@@ -392,6 +392,7 @@ fn spawn_engine(engine_dir: &std::path::Path, uv_path: Option<&str>) -> Result<C
                 "run", "uvicorn", "src.main:app",
                 "--host", "127.0.0.1",
                 "--port", "8001",
+                "--ws-ping-interval", "0",
             ])
             .current_dir(engine_dir)
             .envs(env)
@@ -413,6 +414,7 @@ fn spawn_engine(engine_dir: &std::path::Path, uv_path: Option<&str>) -> Result<C
                 "-m", "uvicorn", "src.main:app",
                 "--host", "127.0.0.1",
                 "--port", "8001",
+                "--ws-ping-interval", "0",
             ])
             .current_dir(engine_dir)
             .envs(env)

@@ -157,13 +157,12 @@ class TestCartesiaTTSConfig:
         assert CartesiaTTS.API_VERSION == "2025-04-16"
 
     @pytest.mark.asyncio
-    async def test_empty_api_key_returns_no_audio(self):
-        """Verify synthesize_stream gracefully exits when API key is empty."""
+    async def test_empty_api_key_raises(self):
+        """Verify synthesize_stream raises ValueError when API key is empty."""
         tts = CartesiaTTS(api_key="")
-        chunks = []
-        async for chunk in tts.synthesize_stream("Hello"):
-            chunks.append(chunk)
-        assert chunks == []
+        with pytest.raises(ValueError, match="CARTESIA_API_KEY is empty"):
+            async for _ in tts.synthesize_stream("Hello"):
+                pass
 
 
 class TestCartesiaTTSResponseParsing:

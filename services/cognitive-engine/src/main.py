@@ -277,6 +277,15 @@ async def _run_claude_code(
     }
 
 
+async def _init_mcp_registry() -> None:
+    """Initialize MCP registry in the background so it doesn't block startup."""
+    try:
+        await mcp_registry.initialize()
+        logger.info("MCP Registry ready — %d external tools.", len(mcp_registry.get_tools()))
+    except Exception as exc:
+        logger.error("MCP Registry init failed (non-fatal): %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Load the Silero VAD model and connect external MCP servers at startup."""
@@ -295,9 +304,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.silero_model = load_silero_model()
     logger.info("Silero VAD model ready.")
 
-    logger.info("Initialising Universal MCP Registry…")
-    await mcp_registry.initialize()
-    logger.info("MCP Registry ready — %d external tools.", len(mcp_registry.get_tools()))
+    logger.info("Initialising Universal MCP Registry (background)…")
+    asyncio.create_task(_init_mcp_registry())
 
     yield
 
@@ -1159,8 +1167,16 @@ async def voco_stream(websocket: WebSocket) -> None:
             logger.info("[TTS] Sent %d audio chunks to frontend.", chunk_count)
             if chunk_count == 0:
                 logger.warning("[TTS] Zero audio chunks — Cartesia may have rejected the request.")
+                await send_error(websocket, VocoError(
+                    code=ErrorCode.E_TTS_FAILED,
+                    message="Voice synthesis returned no audio — your Cartesia API key may be expired.",
+                ))
         except Exception as tts_exc:
             logger.error("[TTS] Synthesis failed: %s", tts_exc)
+            await send_error(websocket, VocoError(
+                code=ErrorCode.E_TTS_FAILED,
+                message=f"Voice synthesis failed: {tts_exc}",
+            ))
 
         await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
 

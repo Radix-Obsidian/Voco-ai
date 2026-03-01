@@ -55,8 +55,7 @@ class CartesiaTTS:
         Uses Cartesia's WebSocket streaming endpoint for sub-100ms TTFB.
         """
         if not self._api_key:
-            logger.error("[TTS] CARTESIA_API_KEY is empty — cannot synthesize audio.")
-            return
+            raise ValueError("CARTESIA_API_KEY is empty — cannot synthesize audio. Set it in Settings or .env.")
 
         ws_url = (
             f"{self.WS_URL}"
@@ -72,6 +71,7 @@ class CartesiaTTS:
                 "mode": "id",
                 "id": self._voice_id,
             },
+            "language": "en",
             "output_format": {
                 "container": "raw",
                 "encoding": "pcm_s16le",
@@ -114,5 +114,7 @@ class CartesiaTTS:
 
         except websockets.exceptions.InvalidStatusCode as exc:
             logger.error("[TTS] Cartesia rejected connection (status %s) — check CARTESIA_API_KEY.", exc.status_code)
+            raise
         except Exception as exc:
             logger.error("[TTS] WebSocket error: %s", exc)
+            raise
