@@ -70,6 +70,14 @@ export interface BackgroundJob {
   status: "running" | "completed" | "failed";
 }
 
+/** Claude Code delegation progress (secret menu tool). */
+export interface ClaudeCodeDelegation {
+  job_id: string;
+  task_description: string;
+  status: "running" | "completed" | "failed";
+  messages: string[];
+}
+
 export function useVocoSocket() {
   const [isConnected, setIsConnected] = useState(false);
   const [bargeInActive, setBargeInActive] = useState(false);
@@ -80,6 +88,7 @@ export function useVocoSocket() {
   const [commandProposals, setCommandProposals] = useState<CommandProposal[]>([]);
   const [ledgerState, setLedgerState] = useState<LedgerState | null>(null);
   const [backgroundJobs, setBackgroundJobs] = useState<BackgroundJob[]>([]);
+  const [claudeCodeDelegation, setClaudeCodeDelegation] = useState<ClaudeCodeDelegation | null>(null);
   const [sandboxUrl, setSandboxUrl] = useState<string | null>(null);
   const [sandboxRefreshKey, setSandboxRefreshKey] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState("");
@@ -452,6 +461,16 @@ export function useVocoSocket() {
     }
   }, []);
 
+  const cancelBackgroundJob = useCallback((jobId: string) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "cancel_job", job_id: jobId }));
+    }
+    // Immediately remove from UI
+    setBackgroundJobs((prev) => prev.filter((j) => j.job_id !== jobId));
+    console.log(`[VocoSocket] Cancel requested for job ${jobId}`);
+  }, []);
+
   const submitCommandDecisions = useCallback((decisions: Array<{ command_id: string; status: "approved" | "rejected" }>) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -498,7 +517,9 @@ export function useVocoSocket() {
       try {
         const msg = JSON.parse(event.data);
 
-        if (msg.type === "session_init") {
+        if (msg.type === "heartbeat") {
+          // No-op — server heartbeat to keep WebSocket alive during long operations
+        } else if (msg.type === "session_init") {
           setSessionId(msg.session_id ?? null);
           console.log(`[VocoSocket] Session initialized: ${msg.session_id}`);
         } else if (msg.type === "error") {
@@ -529,11 +550,11 @@ export function useVocoSocket() {
             ttsActiveRef.current = true;
             console.log("[TTS] Active — mic suppressed to prevent echo");
           } else if (msg.action === "tts_end") {
-            // Delay mic resume slightly so tail-end audio doesn't trigger VAD
+            // Delay mic resume so speaker tail-end audio doesn't trigger VAD
             setTimeout(() => {
               ttsActiveRef.current = false;
               console.log("[TTS] Ended — mic resumed");
-            }, 600);
+            }, 1500);
           }
         } else if (msg.type === "background_job_start") {
           // A new async tool was dispatched to the background queue.
@@ -584,6 +605,12 @@ export function useVocoSocket() {
               status: "pending",
             },
           ]);
+        } else if (msg.type === "user_info") {
+          // Backend sends tier + founder status after auth_sync lookup (service key)
+          const tier = msg.tier ?? "free";
+          localStorage.setItem("voco-tier", tier);
+          window.dispatchEvent(new StorageEvent("storage", { key: "voco-tier", newValue: tier }));
+          console.log(`[VocoSocket] user_info: tier=${tier} founder=${msg.is_founder}`);
         } else if (msg.type === "screen_capture_request") {
           // Phase 3: Voco Eyes — capture recent screen frames and send back
           const requestId: string = msg.id ?? "";
@@ -617,6 +644,37 @@ export function useVocoSocket() {
               status: "pending",
             },
           ]);
+        } else if (msg.type === "claude_code_start") {
+          setClaudeCodeDelegation({
+            job_id: msg.job_id,
+            task_description: msg.task_description ?? "",
+            status: "running",
+            messages: [],
+          });
+          console.log(`[ClaudeCode] Delegation started: ${msg.job_id}`);
+        } else if (msg.type === "claude_code_progress") {
+          setClaudeCodeDelegation((prev) => {
+            if (!prev || prev.job_id !== msg.job_id) return prev;
+            const updated = [...prev.messages, msg.message ?? ""].slice(-20);
+            return { ...prev, messages: updated };
+          });
+        } else if (msg.type === "claude_code_complete") {
+          setClaudeCodeDelegation((prev) => {
+            if (!prev || prev.job_id !== msg.job_id) return prev;
+            return { ...prev, status: msg.success ? "completed" : "failed" };
+          });
+          toast({
+            title: msg.success ? "Claude Code finished" : "Claude Code failed",
+            description: (msg.summary as string)?.slice(0, 120) ?? "",
+          });
+          // Auto-clear after 10s
+          const completedJobId = msg.job_id;
+          setTimeout(() => {
+            setClaudeCodeDelegation((prev) =>
+              prev?.job_id === completedJobId ? null : prev
+            );
+          }, 10000);
+          console.log(`[ClaudeCode] Delegation complete: ${msg.job_id} success=${msg.success}`);
         } else if (msg.type === "sandbox_live") {
           // Phase 5: Live Sandbox — first generation
           setSandboxUrl(msg.url as string);
@@ -739,6 +797,7 @@ export function useVocoSocket() {
     submitCommandDecisions,
     ledgerState,
     backgroundJobs,
+    cancelBackgroundJob,
     wsRef,
     sendAuthSync,
     sandboxUrl,
@@ -749,5 +808,6 @@ export function useVocoSocket() {
     lastError,
     isReconnecting,
     turnCount,
+    claudeCodeDelegation,
   };
 }

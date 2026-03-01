@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import Header from "@/components/Header";
 import { useVocoSocket, type TerminalOutput } from "@/hooks/use-voco-socket";
 import { useAudioCapture } from "@/hooks/use-audio-capture";
@@ -15,6 +15,8 @@ import { useAuth } from "@/hooks/use-auth";
 import { useAppUpdater } from "@/hooks/use-app-updater";
 import { useUsageTracking, FREE_TURN_LIMIT } from "@/hooks/use-usage-tracking";
 import { useToast } from "@/hooks/use-toast";
+import { useKeybindings, useGlobalShortcuts, formatCombo } from "@/hooks/use-keybindings";
+import type { KeybindingAction } from "@/hooks/use-keybindings";
 
 const AppPage = () => {
   const {
@@ -31,20 +33,24 @@ const AppPage = () => {
     submitCommandDecisions,
     ledgerState,
     backgroundJobs,
+    cancelBackgroundJob,
     wsRef,
     sandboxUrl,
     sandboxRefreshKey,
     setSandboxUrl,
     sendAuthSync,
     liveTranscript,
+    claudeCodeDelegation,
   } = useVocoSocket();
 
   const { settings, updateSetting, hasRequiredKeys, pushToBackend, saveSettings } = useSettings();
   const { session, isFounder, signOut, userTier } = useAuth();
   const { toast } = useToast();
   useAppUpdater();
+  const { bindings, updateBinding, resetBindings } = useKeybindings();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
+  const [commandsOpen, setCommandsOpen] = useState(false);
   const usage = useUsageTracking(session?.user?.id, isFounder, userTier);
   const { turnCount, isCapped: atTurnLimit, activeWarning, recordTurn } = usage;
   const prevTerminalOutput = useRef<TerminalOutput | null>(null);
@@ -57,10 +63,17 @@ const AppPage = () => {
   const { isCapturing, startCapture, stopCapture } =
     useAudioCapture(isConnected ? sendAudioChunk : null);
 
+  // Stable connect/disconnect — run only once on mount, not on every render.
+  const connectRef = useRef(connect);
+  const disconnectRef = useRef(disconnect);
+  connectRef.current = connect;
+  disconnectRef.current = disconnect;
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    connect();
-    return () => disconnect();
-  }, [connect, disconnect]);
+    connectRef.current();
+    return () => disconnectRef.current();
+  }, []);
 
   // hasRequiredKeys is always true — audio keys are backend-bundled.
 
@@ -105,30 +118,22 @@ const AppPage = () => {
 
   const handleCloseTerminal = () => setTerminalOutput(null);
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      // Cmd/Ctrl+K — toggle voice/text mode
-      if (mod && e.key === "k") {
-        e.preventDefault();
-        setMode((prev) => (prev === "speak" ? "type" : "speak"));
-      }
-      // Cmd/Ctrl+, — open settings
-      if (mod && e.key === ",") {
-        e.preventDefault();
-        setSettingsOpen(true);
-      }
-      // Escape — close modals / stop capture
-      if (e.key === "Escape") {
+  // Global keyboard shortcuts — driven by user-configurable keybindings
+  const shortcutHandlers = useMemo<Partial<Record<KeybindingAction, () => void>>>(
+    () => ({
+      toggle_mode: () => setMode((prev) => (prev === "speak" ? "type" : "speak")),
+      open_settings: () => setSettingsOpen(true),
+      voice_commands: () => setCommandsOpen((prev) => !prev),
+      dismiss: () => {
         if (settingsOpen) setSettingsOpen(false);
-        else if (pricingOpen && !atTurnLimit) setPricingOpen(false); // blocked when forced paywall
+        else if (commandsOpen) setCommandsOpen(false);
+        else if (pricingOpen && !atTurnLimit) setPricingOpen(false);
         else if (isCapturing) stopCapture();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [settingsOpen, pricingOpen, isCapturing, stopCapture]);
+      },
+    }),
+    [settingsOpen, commandsOpen, pricingOpen, atTurnLimit, isCapturing, stopCapture]
+  );
+  useGlobalShortcuts(bindings, shortcutHandlers);
 
   const handleSettingsSave = () => {
     saveSettings();                   // persist to OS config file
@@ -160,7 +165,7 @@ const AppPage = () => {
     }
   };
 
-  const hasSidebarContent = !!ledgerState || backgroundJobs.length > 0 || !!terminalOutput || proposals.length > 0 || commandProposals.length > 0;
+  const hasSidebarContent = !!ledgerState || backgroundJobs.length > 0 || !!terminalOutput || proposals.length > 0 || commandProposals.length > 0 || !!claudeCodeDelegation;
 
   const isSandboxActive = !!sandboxUrl;
 
@@ -247,7 +252,9 @@ const AppPage = () => {
             className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs text-zinc-500 hover:text-zinc-300 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.04] transition-all"
           >
             Type instead
-            <kbd className="ml-1.5 px-1.5 py-0.5 rounded bg-white/[0.06] text-[10px] text-zinc-600 font-mono">⌘K</kbd>
+            {bindings.toggle_mode && (
+              <kbd className="ml-1.5 px-1.5 py-0.5 rounded bg-white/[0.06] text-[10px] text-zinc-600 font-mono">{formatCombo(bindings.toggle_mode)}</kbd>
+            )}
           </button>
         </div>
       ) : (
@@ -285,7 +292,9 @@ const AppPage = () => {
           >
             <Mic className="w-3 h-3" />
             Speak instead
-            <kbd className="ml-1.5 px-1.5 py-0.5 rounded bg-white/[0.06] text-[10px] text-zinc-600 font-mono">⌘K</kbd>
+            {bindings.toggle_mode && (
+              <kbd className="ml-1.5 px-1.5 py-0.5 rounded bg-white/[0.06] text-[10px] text-zinc-600 font-mono">{formatCombo(bindings.toggle_mode)}</kbd>
+            )}
           </button>
         </div>
       )}
@@ -299,6 +308,9 @@ const AppPage = () => {
       <Header
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenPricing={() => setPricingOpen(true)}
+        commandsOpen={commandsOpen}
+        onCommandsOpenChange={setCommandsOpen}
+        voiceCommandsBinding={bindings.voice_commands}
       />
 
       <SettingsModal
@@ -307,6 +319,9 @@ const AppPage = () => {
         settings={settings}
         onUpdate={updateSetting}
         onSave={handleSettingsSave}
+        keybindings={bindings}
+        onUpdateBinding={updateBinding}
+        onResetBindings={resetBindings}
       />
 
       <PricingModal
@@ -345,6 +360,8 @@ const AppPage = () => {
         onCloseTerminal={handleCloseTerminal}
         onSubmitProposalDecisions={submitProposalDecisions}
         onSubmitCommandDecisions={submitCommandDecisions}
+        onCancelJob={cancelBackgroundJob}
+        claudeCodeDelegation={claudeCodeDelegation}
       />
 
       {showOnboarding && (

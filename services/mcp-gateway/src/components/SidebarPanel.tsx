@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { LedgerState, BackgroundJob, TerminalOutput, Proposal, CommandProposal } from "@/hooks/use-voco-socket";
+import type { LedgerState, BackgroundJob, TerminalOutput, Proposal, CommandProposal, ClaudeCodeDelegation } from "@/hooks/use-voco-socket";
 import { VisualLedger } from "@/components/VisualLedger";
 import { GhostTerminal } from "@/components/GhostTerminal";
 import { ReviewDeck } from "@/components/ReviewDeck";
@@ -16,6 +16,8 @@ interface SidebarPanelProps {
   onCloseTerminal: () => void;
   onSubmitProposalDecisions: (decisions: Array<{ proposal_id: string; status: "approved" | "rejected" }>) => void;
   onSubmitCommandDecisions: (decisions: Array<{ command_id: string; status: "approved" | "rejected" }>) => void;
+  onCancelJob?: (jobId: string) => void;
+  claudeCodeDelegation?: ClaudeCodeDelegation | null;
 }
 
 export function SidebarPanel({
@@ -27,10 +29,12 @@ export function SidebarPanel({
   onCloseTerminal,
   onSubmitProposalDecisions,
   onSubmitCommandDecisions,
+  onCancelJob,
+  claudeCodeDelegation,
 }: SidebarPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
 
-  const hasLedger = !!ledgerState || backgroundJobs.length > 0;
+  const hasLedger = !!ledgerState || backgroundJobs.length > 0 || !!claudeCodeDelegation;
   const hasTerminal = !!terminalOutput;
   const hasProposals = proposals.length > 0;
   const hasCommands = commandProposals.length > 0;
@@ -95,7 +99,7 @@ export function SidebarPanel({
         {/* Section 1: Visual Ledger (pipeline + background jobs) */}
         {hasLedger && (
           <section className="p-4 border-b border-zinc-800/50">
-            <VisualLedger state={ledgerState} backgroundJobs={backgroundJobs} />
+            <VisualLedger state={ledgerState} backgroundJobs={backgroundJobs} onCancelJob={onCancelJob} claudeCodeDelegation={claudeCodeDelegation} />
           </section>
         )}
 

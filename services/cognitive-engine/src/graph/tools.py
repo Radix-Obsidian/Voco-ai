@@ -41,6 +41,11 @@ def search_codebase(
         The caller (mcp_gateway_node) is responsible for sending this over
         the WebSocket and awaiting the result.
     """
+    # Prevent full-disk scans when no project is set
+    if not project_path or project_path in ("/", "\\"):
+        import pathlib
+        project_path = str(pathlib.Path.home())
+
     params: dict = {
         "pattern": pattern,
         "project_path": project_path,
@@ -262,6 +267,13 @@ def generate_and_preview_mvp(app_description: str, html_code: str) -> dict:
     The app is visible on the right side of the Voco UI instantly. Never show raw
     code to the user unless they explicitly ask for it.
 
+    CRITICAL code-quality rules to avoid runtime crashes:
+    - All numeric state values MUST be initialised as numbers, never strings
+      (use 12.5 not "12.5"). Use parseFloat() when reading from inputs.
+    - In useState updaters, always use functional form: setState(prev => ...)
+    - Wrap setInterval/setTimeout updates in try/catch to prevent crash loops
+    - Test that .toFixed(), .toPrecision() etc. are called on Number values only
+
     Args:
         app_description: Brief description of what the app does (for logging).
         html_code: Complete <!DOCTYPE html>...</html> document, self-contained.
@@ -272,6 +284,29 @@ def generate_and_preview_mvp(app_description: str, html_code: str) -> dict:
     return {
         "method": "local/sandbox_preview",
         "params": {"app_description": app_description, "html_code": html_code},
+    }
+
+
+@tool
+def delegate_to_claude_code(task_description: str, project_path: str) -> dict:
+    """Delegate a complex coding task to Claude Code CLI running locally.
+
+    Only use when the user explicitly asks to use Claude Code, delegate to Claude,
+    or says 'let Claude Code handle this'. Do not suggest proactively.
+    Claude Code has full filesystem access and can edit files, run tests, and
+    perform multi-step coding tasks autonomously. Power-user tool.
+    Prerequisites: 'claude' CLI must be installed locally.
+
+    Args:
+        task_description: A detailed description of the coding task to perform.
+        project_path: Absolute path to the project directory for Claude Code to work in.
+
+    Returns:
+        A signal dict that main.py intercepts to spawn the Claude Code CLI subprocess.
+    """
+    return {
+        "method": "local/delegate_claude_code",
+        "params": {"task_description": task_description, "project_path": project_path},
     }
 
 
@@ -347,18 +382,24 @@ def list_directory(path: str, project_path: str, max_depth: int = 3) -> dict:
 
 
 @tool
-def glob_find(pattern: str, project_path: str, file_type: str = "file", max_results: int = 50) -> dict:
+def glob_find(pattern: str, project_path: str = "", file_type: str = "file", max_results: int = 50) -> dict:
     """Find files by name pattern. Use to locate specific files in a project.
 
     Args:
         pattern: Glob pattern to match (e.g. "*.test.ts", "**/*.rs").
         project_path: Absolute path to the project directory to search.
+            If empty or "/", defaults to the user's home directory.
         file_type: Filter by type — "file", "directory", or "any" (default "file").
         max_results: Maximum number of results to return (default 50).
 
     Returns:
         A dict encoding the JSON-RPC 2.0 request to dispatch to Tauri.
     """
+    # Prevent full-disk scans when no project is set
+    if not project_path or project_path in ("/", "\\"):
+        import pathlib
+        project_path = str(pathlib.Path.home())
+
     return {
         "jsonrpc": "2.0",
         "method": "local/glob_find",
@@ -420,5 +461,6 @@ def get_all_tools():
         scan_vulnerabilities,
         generate_and_preview_mvp,
         update_sandbox_preview,
+        delegate_to_claude_code,
         *mcp_registry.get_tools(),
     ]

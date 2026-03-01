@@ -16,10 +16,13 @@ import asyncio
 import json
 import logging
 import os
+import shutil
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,6 +59,7 @@ from src.constants import (
     TTS_GRACE_PERIOD,
     TTS_TAIL_DELAY,
     ALLOWED_ENV_KEYS,
+    CLAUDE_CODE_TIMEOUT,
 )
 
 load_dotenv()
@@ -64,6 +68,39 @@ logger = logging.getLogger(__name__)
 # Tauri app identifier from tauri.conf.json — used to locate config.json.
 _TAURI_APP_ID = "com.voco.mcp-gateway"
 _ALLOWED_ENV_KEYS = ALLOWED_ENV_KEYS
+
+
+def _verify_supabase_jwt(token: str, expected_uid: str) -> bool:
+    """Verify a Supabase JWT signature and check the `sub` claim.
+
+    Fail-open if SUPABASE_JWT_SECRET is not set (dev mode).
+    Returns True if verification passes or is skipped.
+    Raises ValueError if verification fails.
+    """
+    jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "")
+    if not jwt_secret:
+        logger.debug("[Auth] SUPABASE_JWT_SECRET not set — skipping JWT verification (dev mode)")
+        return True
+
+    import jwt  # PyJWT
+
+    try:
+        payload = jwt.decode(
+            token,
+            jwt_secret,
+            algorithms=["HS256"],
+            audience="authenticated",
+        )
+    except jwt.ExpiredSignatureError:
+        raise ValueError("JWT expired")
+    except jwt.InvalidTokenError as e:
+        raise ValueError(f"Invalid JWT: {e}")
+
+    sub = payload.get("sub", "")
+    if sub != expected_uid:
+        raise ValueError(f"JWT sub '{sub}' does not match uid '{expected_uid}'")
+
+    return True
 
 
 # In-memory store for the current Live Sandbox HTML (single-user desktop app).
@@ -132,6 +169,114 @@ def _new_thread_id() -> str:
     return f"session-{uuid.uuid4().hex[:8]}"
 
 
+async def _run_claude_code(
+    task_description: str,
+    project_path: str,
+    websocket: WebSocket,
+    job_id: str,
+) -> dict:
+    """Spawn ``claude -p`` as a subprocess and stream progress to the frontend.
+
+    Returns ``{"success": bool, "summary": str, "exit_code": int}``.
+    """
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
+        await websocket.send_json({
+            "type": "claude_code_progress",
+            "job_id": job_id,
+            "event": "error",
+            "message": "Claude Code CLI not found. Install it with: npm install -g @anthropic-ai/claude-code",
+        })
+        return {"success": False, "summary": "Claude Code CLI is not installed.", "exit_code": -1}
+
+    collected_output: list[str] = []
+    exit_code = -1
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            claude_bin, "-p", task_description, "--output-format", "stream-json",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=project_path,
+        )
+
+        async def _read_stream():
+            assert proc.stdout is not None
+            async for raw_line in proc.stdout:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    evt = json.loads(line)
+                except json.JSONDecodeError:
+                    collected_output.append(line)
+                    continue
+
+                evt_type = evt.get("type", "")
+                msg_text = ""
+
+                if evt_type == "assistant" and "message" in evt:
+                    # Extract text blocks from assistant message
+                    content = evt["message"].get("content", [])
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            msg_text = block.get("text", "")[:200]
+                elif evt_type == "tool_use":
+                    tool_name = evt.get("tool", {}).get("name", "unknown")
+                    msg_text = f"Using tool: {tool_name}"
+                elif evt_type == "tool_result":
+                    msg_text = "Tool completed"
+                elif evt_type == "result":
+                    # Final result
+                    result_text = evt.get("result", "")
+                    if isinstance(result_text, str):
+                        msg_text = result_text[:200]
+                    elif isinstance(result_text, dict):
+                        msg_text = json.dumps(result_text)[:200]
+
+                if msg_text:
+                    collected_output.append(msg_text)
+                    await websocket.send_json({
+                        "type": "claude_code_progress",
+                        "job_id": job_id,
+                        "event": evt_type or "output",
+                        "message": msg_text,
+                    })
+
+        await asyncio.wait_for(_read_stream(), timeout=CLAUDE_CODE_TIMEOUT)
+        await proc.wait()
+        exit_code = proc.returncode or 0
+
+    except asyncio.TimeoutError:
+        logger.warning("[ClaudeCode] Timeout after %.0fs — killing subprocess", CLAUDE_CODE_TIMEOUT)
+        try:
+            proc.kill()  # type: ignore[possibly-undefined]
+            await proc.wait()  # type: ignore[possibly-undefined]
+        except Exception:
+            pass
+        return {
+            "success": False,
+            "summary": f"Claude Code timed out after {int(CLAUDE_CODE_TIMEOUT)}s.",
+            "exit_code": -1,
+        }
+    except FileNotFoundError:
+        return {"success": False, "summary": "Claude Code binary not found.", "exit_code": -1}
+    except Exception as exc:
+        logger.exception("[ClaudeCode] Unexpected error")
+        return {"success": False, "summary": f"Error: {exc}", "exit_code": -1}
+
+    # Truncate collected output to avoid context bloat
+    full_output = "\n".join(collected_output)
+    if len(full_output) > 4000:
+        full_output = full_output[:4000] + "\n... (truncated)"
+
+    return {
+        "success": exit_code == 0,
+        "summary": full_output or "(no output)",
+        "exit_code": exit_code,
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Load the Silero VAD model and connect external MCP servers at startup."""
@@ -168,6 +313,7 @@ app.add_middleware(
         "http://localhost:1420",
         "tauri://localhost",
         "https://tauri.localhost",
+        "https://api.itsvoco.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -238,8 +384,16 @@ async def voco_stream(websocket: WebSocket) -> None:
     await websocket.send_json({"type": "session_init", "session_id": thread_id})
 
     # Per-session auth state (populated by auth_sync from frontend)
-    _auth_uid: str = "local"
-    _auth_token: str = ""
+    _auth_uid = "local"
+    _auth_token = ""
+    _stripe_customer_id = ""
+    _user_email = ""
+    _is_founder = False
+
+    FOUNDER_EMAILS = {
+        "autrearchitect@gmail.com",
+        "architect@viperbyproof.com",
+    }
 
     # Milestone 11: Instant ACK + Background Queue
     # Each pending Tauri RPC call gets an asyncio.Future keyed on the call_id.
@@ -254,7 +408,6 @@ async def voco_stream(websocket: WebSocket) -> None:
 
     async def _cleanup_stale_futures(max_age_seconds: float = RPC_FUTURE_MAX_AGE) -> None:
         """Remove stale futures that have timed out or completed."""
-        import time
         now = time.monotonic()
         stale = [
             fid for fid, ts in _rpc_futures_timestamps.items()
@@ -311,6 +464,8 @@ async def voco_stream(websocket: WebSocket) -> None:
         """Clear the Visual Ledger from the frontend."""
         await websocket.send_json({"type": "ledger_clear"})
 
+    _turn_in_progress = False
+
     async def _on_turn_end(text_override: str | None = None) -> None:
         """Full pipeline: STT → LangGraph → (optional JSON-RPC) → TTS.
 
@@ -319,7 +474,12 @@ async def voco_stream(websocket: WebSocket) -> None:
         straight into LangGraph.  Billing still fires at the end so typed turns
         are metered identically to spoken turns.
         """
-        nonlocal audio_buffer, tts_active
+        nonlocal audio_buffer, tts_active, _turn_in_progress
+
+        if _turn_in_progress:
+            logger.warning("[Pipeline] Turn already in progress — ignoring duplicate trigger.")
+            return
+        _turn_in_progress = True
 
         _session_metrics["turn_count"] += 1
         await websocket.send_json({"type": "control", "action": "turn_ended", "turn_count": _session_metrics["turn_count"]})
@@ -421,11 +581,13 @@ async def voco_stream(websocket: WebSocket) -> None:
             summary_text = f"I have {len(proposals)} proposal{'s' if len(proposals) != 1 else ''} for your review. {'. '.join(desc_list)}. Say approve or reject."
             await websocket.send_json({"type": "control", "action": "tts_start", "text": summary_text, "tts_active": True})
             tts_active = True
+            vad.suppress(True)
             async for audio_chunk in tts.synthesize_stream(summary_text):
                 await websocket.send_bytes(audio_chunk)
             await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
-            tts_active = False
             await asyncio.sleep(TTS_GRACE_PERIOD)
+            tts_active = False
+            vad.suppress(False)
             vad.reset()
             audio_buffer = bytearray()
 
@@ -496,11 +658,13 @@ async def voco_stream(websocket: WebSocket) -> None:
             cmd_summary = f"I need to run {len(commands)} command{'s' if len(commands) != 1 else ''}. {'. '.join(cmd_descs)}. Approve or reject."
             await websocket.send_json({"type": "control", "action": "tts_start", "text": cmd_summary, "tts_active": True})
             tts_active = True
+            vad.suppress(True)
             async for audio_chunk in tts.synthesize_stream(cmd_summary):
                 await websocket.send_bytes(audio_chunk)
             await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
-            tts_active = False
             await asyncio.sleep(TTS_GRACE_PERIOD)
+            tts_active = False
+            vad.suppress(False)
             vad.reset()
             audio_buffer = bytearray()
 
@@ -726,7 +890,63 @@ async def voco_stream(websocket: WebSocket) -> None:
                 _screen_handled = True
 
             # ----------------------------------------------------------------
-            # Standard: Instant ACK + Background Dispatch (all non-screen tools)
+            # Secret Menu: delegate_to_claude_code
+            # Spawns `claude -p` subprocess, streams progress to frontend,
+            # then feeds the summary back to the graph.
+            # ----------------------------------------------------------------
+            elif tool_name == "delegate_to_claude_code":
+                cc_job_id = uuid.uuid4().hex[:8]
+                cc_task = tool_args.get("task_description", "")
+                cc_project = tool_args.get("project_path", os.environ.get("VOCO_PROJECT_PATH", ""))
+                logger.info("[ClaudeCode] Starting delegation job=%s task=%s", cc_job_id, cc_task[:80])
+
+                await websocket.send_json({
+                    "type": "claude_code_start",
+                    "job_id": cc_job_id,
+                    "task_description": cc_task,
+                })
+
+                # Heartbeat keeps WebSocket alive during long Claude Code execution
+                async def _cc_heartbeat():
+                    try:
+                        while True:
+                            await asyncio.sleep(15)
+                            await websocket.send_json({"type": "heartbeat"})
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        pass
+
+                _cc_hb_task = asyncio.create_task(_cc_heartbeat())
+
+                try:
+                    cc_result = await _run_claude_code(cc_task, cc_project, websocket, cc_job_id)
+                finally:
+                    _cc_hb_task.cancel()
+
+                await websocket.send_json({
+                    "type": "claude_code_complete",
+                    "job_id": cc_job_id,
+                    "success": cc_result["success"],
+                    "summary": cc_result["summary"][:500],
+                })
+
+                cc_tool_msg = ToolMessage(
+                    content=(
+                        f"Claude Code finished (exit_code={cc_result['exit_code']}, "
+                        f"success={cc_result['success']}).\n\n"
+                        f"Output:\n{cc_result['summary']}\n\n"
+                        "Summarize what Claude Code did for the user. Be concise — "
+                        "your response will be spoken aloud."
+                    ),
+                    tool_call_id=call_id,
+                )
+                result = await graph.ainvoke({"messages": [cc_tool_msg]}, config=config)
+                _screen_handled = True
+
+            # ----------------------------------------------------------------
+            # Synchronous Agentic Loop — like Claude Code
+            # Tool call → Tauri RPC → result → feed back to Claude → repeat
             # ----------------------------------------------------------------
             if not _screen_handled:
                 _fallback_path = (
@@ -769,137 +989,130 @@ async def voco_stream(websocket: WebSocket) -> None:
                         p["context_lines"] = args["context_lines"]
                     return "local/search_project", p
 
-                _rpc_method, _rpc_params = _build_rpc_params(tool_name, tool_args, _fallback_path)
-                rpc_payload = {
-                    "type": "mcp_request",
-                    "jsonrpc": "2.0",
-                    "id": call_id,
-                    "method": _rpc_method,
-                    "params": _rpc_params,
-                    "meta": {"trace_id": current_trace_id()},
-                }
-                job_id = uuid.uuid4().hex[:8]
-                logger.info(
-                    "[Pipeline] Queuing background job %s for tool '%s' (call_id=%s)",
-                    job_id, tool_name, call_id,
-                )
+                # --- Synchronous tool loop (max 5 iterations to prevent infinite loops) ---
+                MAX_TOOL_LOOPS = 5
+                loop_count = 0
 
-                # 1. Instant ACK ToolMessage — resolves the pending tool_call in <1ms.
-                ack_message = ToolMessage(
-                    content=(
-                        f"Action queued in background with Job ID: {job_id}. "
-                        "You may continue conversing with the user."
-                    ),
-                    tool_call_id=call_id,
-                )
-                await _send_ledger_update(
-                    domain=detected_domain,
-                    context_router="completed",
-                    orchestrator="active",
-                    tools="active",
-                )
+                # Heartbeat keeps WebSocket alive during long tool executions
+                async def _heartbeat():
+                    try:
+                        while True:
+                            await asyncio.sleep(15)
+                            await websocket.send_json({"type": "heartbeat"})
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        pass
 
-                # 2. Reinvoke graph with the ACK so Claude can acknowledge aloud.
-                result = await graph.ainvoke(
-                    {"messages": [ack_message]},
-                    config=config,
-                )
+                _heartbeat_task = asyncio.create_task(_heartbeat())
 
-                # 3. Register a Future keyed on call_id.  The main receive loop
-                #    resolves it when Tauri sends back the matching mcp_result.
-                rpc_future: asyncio.Future = asyncio.get_running_loop().create_future()
-                _pending_rpc_futures[call_id] = rpc_future
-                import time as _time
-                _rpc_futures_timestamps[call_id] = _time.monotonic()
-
-                # 4. Background coroutine: fire the RPC and await the Future.
-                async def _do_tauri_dispatch(
-                    _call_id: str = call_id,
-                    _job_id: str = job_id,
-                    _payload: dict = rpc_payload,
-                    _future: asyncio.Future = rpc_future,
-                ) -> str:
+                while loop_count < MAX_TOOL_LOOPS:
+                    loop_count += 1
+                    _rpc_method, _rpc_params = _build_rpc_params(tool_name, tool_args, _fallback_path)
+                    rpc_payload = {
+                        "type": "mcp_request",
+                        "jsonrpc": "2.0",
+                        "id": call_id,
+                        "method": _rpc_method,
+                        "params": _rpc_params,
+                        "meta": {"trace_id": current_trace_id()},
+                    }
                     logger.info(
-                        "[BackgroundJob %s] Sending Tauri RPC: %s",
-                        _job_id, _payload["method"],
+                        "[Pipeline] Sync tool %d/%d: %s (call_id=%s)",
+                        loop_count, MAX_TOOL_LOOPS, tool_name, call_id,
                     )
+
+                    await _send_ledger_update(
+                        domain=detected_domain,
+                        context_router="completed",
+                        orchestrator="active",
+                        tools="active",
+                    )
+
+                    # Notify frontend of the running tool
+                    job_id = uuid.uuid4().hex[:8]
+                    await websocket.send_json({
+                        "type": "background_job_start",
+                        "job_id": job_id,
+                        "tool_name": tool_name,
+                    })
+
+                    # 1. Send RPC to Tauri and await the response synchronously.
+                    rpc_future: asyncio.Future = asyncio.get_running_loop().create_future()
+                    _pending_rpc_futures[call_id] = rpc_future
+                    _rpc_futures_timestamps[call_id] = time.monotonic()
+
                     try:
-                        await websocket.send_json(_payload)
+                        await websocket.send_json(rpc_payload)
                     except Exception as send_exc:
-                        return f"Failed to dispatch RPC to Tauri: {send_exc}"
-                    try:
-                        raw = await asyncio.wait_for(asyncio.shield(_future), timeout=RPC_BACKGROUND_TIMEOUT)
-                        mcp_resp = json.loads(raw)
-                        has_res = "result" in mcp_resp or mcp_resp.get("type") == "mcp_result"
-                        return (
-                            str(mcp_resp.get("result", ""))
-                            if has_res
-                            else str(mcp_resp.get("error", "no result returned"))
-                        )
-                    except asyncio.TimeoutError:
-                        _pending_rpc_futures.pop(_call_id, None)
-                        await send_error(websocket, VocoError(
-                            code=ErrorCode.E_RPC_TIMEOUT,
-                            message=f"Tauri RPC timed out after 30s (job {_job_id})",
-                            recoverable=True,
-                            session_id=thread_id,
-                            details={"job_id": _job_id, "call_id": _call_id},
-                        ))
-                        return f"Background job {_job_id} timed out after 30 seconds."
+                        tool_result_str = f"Failed to dispatch RPC to Tauri: {send_exc}"
+                    else:
+                        try:
+                            raw = await asyncio.wait_for(rpc_future, timeout=30.0)
+                            mcp_resp = json.loads(raw)
+                            has_res = "result" in mcp_resp or mcp_resp.get("type") == "mcp_result"
+                            tool_result_str = (
+                                str(mcp_resp.get("result", ""))
+                                if has_res
+                                else str(mcp_resp.get("error", "no result returned"))
+                            )
+                        except asyncio.TimeoutError:
+                            _pending_rpc_futures.pop(call_id, None)
+                            _rpc_futures_timestamps.pop(call_id, None)
+                            tool_result_str = f"Tool {tool_name} timed out after 30 seconds."
+                    finally:
+                        _pending_rpc_futures.pop(call_id, None)
+                        _rpc_futures_timestamps.pop(call_id, None)
 
-                # 5. Completion callback: inject result into LangGraph state.
-                async def _on_job_complete(
-                    _job_id: str,
-                    result_str: str,
-                    _config: dict = config,
-                    _tool_name: str = tool_name,
-                    _domain: str = detected_domain,
-                ) -> None:
-                    notification = SystemMessage(
-                        content=(
-                            f"[BACKGROUND JOB COMPLETE] Job {_job_id} "
-                            f"({_tool_name}): {result_str[:2000]}"
-                        )
-                    )
-                    try:
-                        await graph.aupdate_state(_config, {"messages": [notification]})
-                        logger.info(
-                            "[BackgroundJob %s] Result injected into LangGraph state.", _job_id
-                        )
-                    except Exception as state_exc:
-                        logger.error(
-                            "[BackgroundJob %s] Failed to update state: %s", _job_id, state_exc
-                        )
-                    # Persist final node status to Supabase Logic Ledger.
-                    await update_ledger_node(
-                        session_id=thread_id,
-                        node_id="3",
-                        status="completed",
-                        execution_output=result_str,
+                    logger.info(
+                        "[Pipeline] Tool %s returned %d chars.", tool_name, len(tool_result_str),
                     )
 
-                    # Notify the frontend so it can update the Visual Ledger.
+                    # Mark job complete in frontend
                     try:
                         await websocket.send_json({
-                            "type": "async_job_update",
-                            "job_id": _job_id,
-                            "tool_name": _tool_name,
-                            "ledger_node_id": "3",
-                            "status": "completed",
-                            "result": result_str[:500],
+                            "type": "background_job_complete",
+                            "job_id": job_id,
+                            "tool_name": tool_name,
                         })
                     except Exception:
-                        pass  # WebSocket may have closed before the job finished.
+                        pass
 
-                # 6. Fire and forget — runs concurrently with TTS streaming.
-                background_queue.submit(job_id, _do_tauri_dispatch(), _on_job_complete)
-                await websocket.send_json({
-                    "type": "background_job_start",
-                    "job_id": job_id,
-                    "tool_name": tool_name,
-                })
+                    # 2. Feed the real result back to Claude as a proper ToolMessage.
+                    tool_result_msg = ToolMessage(
+                        content=tool_result_str[:4000],  # Cap to avoid context bloat
+                        tool_call_id=call_id,
+                    )
+
+                    # 3. Re-invoke the graph so Claude processes the result.
+                    result = await graph.ainvoke(
+                        {"messages": [tool_result_msg]},
+                        config=config,
+                    )
+
+                    # 4. Check if Claude wants to call another tool (agentic loop).
+                    next_msg = result["messages"][-1]
+                    if isinstance(next_msg, AIMessage) and next_msg.tool_calls:
+                        # Claude wants another tool — loop again
+                        tc = next_msg.tool_calls[0]
+                        tool_name = tc["name"]
+                        tool_args = tc.get("args", {})
+                        call_id = tc["id"]
+                        _fallback_path = (
+                            tool_args.get("project_path", "")
+                            or result.get("active_project_path")
+                            or _fallback_path
+                        )
+                        logger.info("[Pipeline] Claude wants another tool: %s", tool_name)
+                        continue
+                    else:
+                        # Claude is done — break out, proceed to TTS
+                        break
+
+                _heartbeat_task.cancel()
+
                 logger.info(
-                    "[Pipeline] Background job %s dispatched; proceeding to TTS.", job_id
+                    "[Pipeline] Agentic loop done after %d iteration(s).", loop_count,
                 )
 
         # --- Step 4: Extract final text and synthesise via Cartesia TTS ---
@@ -919,6 +1132,7 @@ async def voco_stream(websocket: WebSocket) -> None:
         await websocket.send_json({"type": "control", "action": "tts_start", "text": response_text, "tts_active": True})
 
         tts_active = True
+        vad.suppress(True)
         try:
             chunk_count = 0
             async for audio_chunk in tts.synthesize_stream(response_text):
@@ -931,15 +1145,19 @@ async def voco_stream(websocket: WebSocket) -> None:
             logger.error("[TTS] Synthesis failed: %s", tts_exc)
 
         await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
-        tts_active = False
 
-        # Small grace period so mic doesn't pick up tail-end of TTS audio
+        # Grace period BEFORE resuming mic — speakers may still be playing
         await asyncio.sleep(TTS_GRACE_PERIOD)
+        tts_active = False
+        vad.suppress(False)
         vad.reset()
         audio_buffer = bytearray()
 
         # --- Stripe Seat + Meter: report one voice turn (fire and forget) ---
-        asyncio.create_task(report_voice_turn(customer_id=_auth_uid))
+        if _is_founder:
+            logger.debug("[Billing] Skipping meter for founder %s", _user_email)
+        else:
+            asyncio.create_task(report_voice_turn(customer_id=_stripe_customer_id))
 
         # --- Supabase Logic Ledger sync ---
         domain_icon = {"database": "Database", "ui": "FileCode2", "api": "Terminal", "devops": "Terminal", "git": "Terminal", "general": "FileCode2"}
@@ -961,6 +1179,7 @@ async def voco_stream(websocket: WebSocket) -> None:
 
     async def _safe_turn_end() -> None:
         """Wraps _on_turn_end with error handling so ledger always clears."""
+        nonlocal _turn_in_progress
         with tracer.start_as_current_span("voco.session.turn", attributes={"session.id": thread_id}):
             try:
                 await _on_turn_end()
@@ -976,9 +1195,12 @@ async def voco_stream(websocket: WebSocket) -> None:
                     await _send_ledger_clear()
                 except Exception:
                     pass
+            finally:
+                _turn_in_progress = False
 
     async def _safe_text_input(text: str) -> None:
         """Run the full pipeline for a typed message, bypassing STT."""
+        nonlocal _turn_in_progress
         with tracer.start_as_current_span("voco.session.turn", attributes={"session.id": thread_id, "input.type": "text"}):
             try:
                 await _on_turn_end(text_override=text)
@@ -994,13 +1216,14 @@ async def voco_stream(websocket: WebSocket) -> None:
                     await _send_ledger_clear()
                 except Exception:
                     pass
+            finally:
+                _turn_in_progress = False
 
     async def _receive_filtered(expected_type: str, timeout: float = 60.0) -> dict:
         """Receive text messages, draining non-matching ones, until expected_type arrives."""
-        import time as _time
-        deadline = _time.monotonic() + timeout
+        deadline = time.monotonic() + timeout
         while True:
-            remaining = deadline - _time.monotonic()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return {}
             raw = await asyncio.wait_for(websocket.receive_text(), timeout=remaining)
@@ -1019,7 +1242,7 @@ async def voco_stream(websocket: WebSocket) -> None:
                 if text:
                     asyncio.create_task(_safe_text_input(text))
             elif msg_type == "auth_sync":
-                nonlocal _auth_token, _auth_uid
+                nonlocal _auth_token, _auth_uid, _stripe_customer_id, _user_email, _is_founder
                 _auth_token = payload.get("token", "")
                 _auth_uid = payload.get("uid", "local")
                 _refresh_token = payload.get("refresh_token", "")
@@ -1095,6 +1318,8 @@ async def voco_stream(websocket: WebSocket) -> None:
                             _auth_token = payload.get("token", "")
                             _auth_uid = payload.get("uid", "local")
                             _refresh_token = payload.get("refresh_token", "")
+                            # Verify JWT signature (fail-open in dev when secret not set)
+                            _verify_supabase_jwt(_auth_token, _auth_uid)
                             # Extract voco_session_token from Supabase user metadata
                             # (LiteLLM virtual key stored in user_metadata by admin)
                             voco_token = payload.get("voco_session_token", "")
@@ -1108,6 +1333,43 @@ async def voco_stream(websocket: WebSocket) -> None:
                             set_auth_jwt(_auth_token, _auth_uid, refresh_token=_refresh_token)
                             logger.info("[WS] auth_sync: uid=%s token_len=%d", _auth_uid, len(_auth_token))
                             debug_logger.log_ws_event("auth_sync", thread_id, {"uid": _auth_uid, "token_len": len(_auth_token)})
+
+                            # Look up stripe_customer_id + email from users table
+                            try:
+                                _sb_url = os.environ.get("SUPABASE_URL", "")
+                                _sb_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+                                if _sb_url and _sb_key:
+                                    async with httpx.AsyncClient() as _http:
+                                        resp = await _http.get(
+                                            f"{_sb_url}/rest/v1/users",
+                                            params={"id": f"eq.{_auth_uid}", "select": "stripe_customer_id,email,tier"},
+                                            headers={
+                                                "apikey": _sb_key,
+                                                "Authorization": f"Bearer {_sb_key}",
+                                            },
+                                            timeout=5.0,
+                                        )
+                                        rows = resp.json()
+                                        if rows and isinstance(rows, list) and len(rows) > 0:
+                                            _stripe_customer_id = rows[0].get("stripe_customer_id", "") or ""
+                                            _user_email = rows[0].get("email", "") or ""
+                                            _user_tier = rows[0].get("tier", "") or "free"
+                                            _is_founder = _user_email in FOUNDER_EMAILS
+                                            logger.info(
+                                                "[WS] auth_sync: stripe_cid=%s email=%s founder=%s tier=%s",
+                                                _stripe_customer_id[:12] + "..." if _stripe_customer_id else "(none)",
+                                                _user_email,
+                                                _is_founder,
+                                                _user_tier,
+                                            )
+                                            # Send tier + founder status to frontend (avoids frontend needing direct DB access)
+                                            await websocket.send_json({
+                                                "type": "user_info",
+                                                "tier": _user_tier,
+                                                "is_founder": _is_founder,
+                                            })
+                            except Exception as lookup_exc:
+                                logger.warning("[WS] Supabase user lookup failed (non-fatal): %s", lookup_exc)
                         except Exception as auth_exc:
                             debug_logger.log_auth_failure(thread_id, "auth_sync processing failed", auth_exc)
                             await send_error(websocket, VocoError(
@@ -1122,6 +1384,11 @@ async def voco_stream(websocket: WebSocket) -> None:
                             if k in _ALLOWED_ENV_KEYS and isinstance(v, str) and v:
                                 os.environ[k] = v
                         logger.info("[WS] Environment updated: %s", list(env_patch.keys()))
+                    elif msg_type == "cancel_job":
+                        cancel_id = payload.get("job_id", "")
+                        if cancel_id:
+                            background_queue.cancel_job(cancel_id)
+                            logger.info("[WS] Cancel requested for job %s", cancel_id)
                     elif "jsonrpc" in payload and "id" in payload and "type" not in payload:
                         # JSON-RPC response from Tauri (no "type" field).
                         # Route to the awaiting background job future.

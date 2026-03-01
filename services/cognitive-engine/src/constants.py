@@ -21,7 +21,7 @@ RPC_BACKGROUND_TIMEOUT: float = 30.0  # Background job RPC wait
 RPC_FUTURE_MAX_AGE: float = 300.0  # 5 minutes before stale future cleanup
 
 # TTS timing (seconds)
-TTS_GRACE_PERIOD: float = 0.5  # Delay after TTS before re-enabling mic
+TTS_GRACE_PERIOD: float = 1.5  # Delay after TTS before re-enabling mic
 TTS_TAIL_DELAY: float = 0.6  # Delay before resuming mic after TTS ends
 
 # Model settings
@@ -38,6 +38,9 @@ ALLOWED_ENV_KEYS: set[str] = {
     "SUPABASE_ANON_KEY",
     "GOOGLE_API_KEY",
 }
+
+# Claude Code delegation
+CLAUDE_CODE_TIMEOUT: float = 300.0  # 5 min max for Claude Code subprocess
 
 # Tauri config
 TAURI_APP_ID: str = "com.voco.mcp-gateway"
