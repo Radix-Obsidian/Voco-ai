@@ -891,8 +891,10 @@ async def voco_stream(websocket: WebSocket) -> None:
 
             # ----------------------------------------------------------------
             # Secret Menu: delegate_to_claude_code
-            # Spawns `claude -p` subprocess, streams progress to frontend,
-            # then feeds the summary back to the graph.
+            # Uses Instant ACK + Background Task pattern so the WS handler
+            # returns immediately (prevents keepalive ping timeout).
+            # The subprocess result is injected into the checkpoint; Claude
+            # sees it on the user's next turn.
             # ----------------------------------------------------------------
             elif tool_name == "delegate_to_claude_code":
                 cc_job_id = uuid.uuid4().hex[:8]
@@ -906,42 +908,58 @@ async def voco_stream(websocket: WebSocket) -> None:
                     "task_description": cc_task,
                 })
 
-                # Heartbeat keeps WebSocket alive during long Claude Code execution
-                async def _cc_heartbeat():
-                    try:
-                        while True:
-                            await asyncio.sleep(15)
-                            await websocket.send_json({"type": "heartbeat"})
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception:
-                        pass
-
-                _cc_hb_task = asyncio.create_task(_cc_heartbeat())
-
-                try:
-                    cc_result = await _run_claude_code(cc_task, cc_project, websocket, cc_job_id)
-                finally:
-                    _cc_hb_task.cancel()
-
-                await websocket.send_json({
-                    "type": "claude_code_complete",
-                    "job_id": cc_job_id,
-                    "success": cc_result["success"],
-                    "summary": cc_result["summary"][:500],
-                })
-
-                cc_tool_msg = ToolMessage(
+                # Instant ACK — satisfies Claude's tool_call → tool_result contract
+                ack_tool_msg = ToolMessage(
                     content=(
-                        f"Claude Code finished (exit_code={cc_result['exit_code']}, "
-                        f"success={cc_result['success']}).\n\n"
-                        f"Output:\n{cc_result['summary']}\n\n"
-                        "Summarize what Claude Code did for the user. Be concise — "
-                        "your response will be spoken aloud."
+                        "Claude Code delegation started in the background. "
+                        "Tell the user: 'I've handed this off to Claude Code — "
+                        "I'll let you know when it's done.' Keep it short."
                     ),
                     tool_call_id=call_id,
                 )
-                result = await graph.ainvoke({"messages": [cc_tool_msg]}, config=config)
+                result = await graph.ainvoke({"messages": [ack_tool_msg]}, config=config)
+
+                # Background task — runs the subprocess without blocking the WS handler
+                async def _cc_background(
+                    _job_id: str, _task: str, _project: str,
+                    _ws: WebSocket, _graph, _config: dict,
+                ):
+                    try:
+                        cc_result = await _run_claude_code(_task, _project, _ws, _job_id)
+                    except Exception as exc:
+                        logger.exception("[ClaudeCode] Background task error")
+                        cc_result = {"success": False, "summary": str(exc), "exit_code": -1}
+
+                    try:
+                        await _ws.send_json({
+                            "type": "claude_code_complete",
+                            "job_id": _job_id,
+                            "success": cc_result["success"],
+                            "summary": cc_result["summary"][:500],
+                        })
+                    except Exception:
+                        logger.warning("[ClaudeCode] Could not send completion to frontend")
+
+                    # Inject result into checkpoint so Claude sees it next turn
+                    try:
+                        result_msg = SystemMessage(
+                            content=(
+                                f"[Background] Claude Code finished "
+                                f"(success={cc_result['success']}, exit_code={cc_result['exit_code']}).\n"
+                                f"Output:\n{cc_result['summary']}"
+                            )
+                        )
+                        await _graph.aupdate_state(
+                            _config,
+                            {"messages": [result_msg]},
+                        )
+                        logger.info("[ClaudeCode] Result injected into checkpoint for job=%s", _job_id)
+                    except Exception as exc:
+                        logger.warning("[ClaudeCode] Failed to inject result into checkpoint: %s", exc)
+
+                asyncio.create_task(
+                    _cc_background(cc_job_id, cc_task, cc_project, websocket, graph, config)
+                )
                 _screen_handled = True
 
             # ----------------------------------------------------------------
