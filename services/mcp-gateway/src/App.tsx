@@ -11,10 +11,10 @@ import { useState, useCallback } from "react";
 
 const queryClient = new QueryClient();
 
-const SPLASH_MIN_DISPLAY_MS = 7000;
+const SPLASH_MIN_DISPLAY_MS = 3000;
 
 const AppInner = () => {
-  const { isReady, error } = useBackendReady();
+  const { isReady, error, setupMessage } = useBackendReady();
   const [splashDone, setSplashDone] = useState(false);
   const handleSplashReady = useCallback(() => setSplashDone(true), []);
 
@@ -26,6 +26,7 @@ const AppInner = () => {
     return (
       <SplashScreen
         error={null}
+        setupMessage={setupMessage}
         minDisplayTime={SPLASH_MIN_DISPLAY_MS}
         onReady={handleSplashReady}
       />

@@ -10,6 +10,7 @@
     "dev:engine": "cd ../cognitive-engine && uv run uvicorn src.main:app --host 0.0.0.0 --port 8001",
     "dev:litellm": "cd ../cognitive-engine && uv run litellm --config litellm_config.yaml --port 4000",
     "build": "tsc -b && vite build",
+    "build:bundle": "pwsh ../../scripts/bundle-python.ps1 && npx tauri build",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest",

@@ -4,13 +4,15 @@ import vocoLogo from "@/assets/voco-logo.jpg";
 interface SplashScreenProps {
   error: string | null;
   onRetry?: () => void;
+  /** First-launch setup progress (e.g. "Installing Python runtime..."). */
+  setupMessage?: string | null;
   /** Minimum time (ms) to display the splash before auto-dismissing. Default: 0 (dismiss immediately). */
   minDisplayTime?: number;
   /** Called when the minimum display time has elapsed (only when no error). */
   onReady?: () => void;
 }
 
-const SplashScreen = ({ error, onRetry, minDisplayTime = 0, onReady }: SplashScreenProps) => {
+const SplashScreen = ({ error, onRetry, setupMessage, minDisplayTime = 0, onReady }: SplashScreenProps) => {
   const [dots, setDots] = useState("");
   const [fadingOut, setFadingOut] = useState(false);
 
@@ -74,10 +76,13 @@ const SplashScreen = ({ error, onRetry, minDisplayTime = 0, onReady }: SplashScr
               <div className="w-8 h-8 border-2 border-voco-cyan/30 border-t-voco-cyan rounded-full animate-spin" />
             </div>
             <p className="text-zinc-400 text-sm">
-              Initializing Voco{dots}
+              {setupMessage || `Initializing Voco${dots}`}
             </p>
             <p className="text-zinc-600 text-xs">
-              Starting cognitive engine and AI proxy
+              {setupMessage
+                ? "This only happens once — sit tight!"
+                : "Starting cognitive engine and AI proxy"
+              }
             </p>
           </div>
         )}

@@ -6,6 +6,8 @@ export interface BackendStatus {
   engine_ready: boolean;
   litellm_ready: boolean;
   error: string | null;
+  /** First-launch setup progress message (e.g. "Installing Python runtime...") */
+  setup_message: string | null;
 }
 
 /**
@@ -18,6 +20,7 @@ export function useBackendReady() {
     engine_ready: false,
     litellm_ready: false,
     error: null,
+    setup_message: null,
   });
   const [checking, setChecking] = useState(true);
 
@@ -73,5 +76,5 @@ export function useBackendReady() {
 
   const isReady = status.engine_ready;
 
-  return { status, isReady, checking, error: status.error };
+  return { status, isReady, checking, error: status.error, setupMessage: status.setup_message };
 }

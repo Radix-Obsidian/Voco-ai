@@ -41,6 +41,10 @@
     "externalBin": [
       "binaries/rg"
     ],
+    "resources": [
+      "resources/uv/*",
+      "resources/cognitive-engine/**/*"
+    ],
     "createUpdaterArtifacts": true
   },
   "plugins": {

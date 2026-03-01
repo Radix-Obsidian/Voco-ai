@@ -49,3 +49,7 @@ __pycache__/
 
 # Tauri
 target/
+
+# Bundled resources (downloaded by scripts/bundle-python.ps1)
+services/mcp-gateway/src-tauri/resources/uv/
+services/mcp-gateway/src-tauri/resources/cognitive-engine/
