@@ -17,8 +17,15 @@ import { useUsageTracking, FREE_TURN_LIMIT } from "@/hooks/use-usage-tracking";
 import { useToast } from "@/hooks/use-toast";
 import { useKeybindings, useGlobalShortcuts, formatCombo } from "@/hooks/use-keybindings";
 import type { KeybindingAction } from "@/hooks/use-keybindings";
+import { useDemoMode } from "@/hooks/use-demo-mode";
+
+const IS_DEMO = new URLSearchParams(window.location.search).has("demo");
 
 const AppPage = () => {
+  const liveSocket = useVocoSocket();
+  const demoSocket = useDemoMode();
+  const source = IS_DEMO ? demoSocket : liveSocket;
+
   const {
     isConnected,
     bargeInActive,
@@ -33,15 +40,15 @@ const AppPage = () => {
     submitCommandDecisions,
     ledgerState,
     backgroundJobs,
-    cancelBackgroundJob,
     wsRef,
     sandboxUrl,
     sandboxRefreshKey,
     setSandboxUrl,
     sendAuthSync,
     liveTranscript,
-    claudeCodeDelegation,
-  } = useVocoSocket();
+  } = source;
+  const cancelBackgroundJob = IS_DEMO ? undefined : liveSocket.cancelBackgroundJob;
+  const claudeCodeDelegation = IS_DEMO ? undefined : liveSocket.claudeCodeDelegation;
 
   const { settings, updateSetting, hasRequiredKeys, pushToBackend, saveSettings } = useSettings();
   const { session, isFounder, signOut, userTier } = useAuth();

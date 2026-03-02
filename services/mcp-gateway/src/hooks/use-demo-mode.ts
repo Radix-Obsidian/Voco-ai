@@ -5,9 +5,9 @@ import type {
   LedgerState,
   CommandProposal,
   BackgroundJob,
+  ClaudeCodeDelegation,
 } from "@/hooks/use-voco-socket";
 import {
-  SCENE1_TRANSCRIPT,
   SCENE1_LEDGER_STAGES,
   SCENE2_PROPOSALS,
   SCENE3_COMMAND,
@@ -18,51 +18,57 @@ import {
   SCENE4_LEDGER_STAGES,
 } from "@/data/demo-script";
 
-type DemoScene = 1 | 2 | 3 | 4;
-type ScenePhase = "playing" | "waiting" | "hitl";
-
-interface DemoState {
-  isConnected: boolean;
-  bargeInActive: boolean;
-  terminalOutput: TerminalOutput | null;
-  proposals: Proposal[];
-  commandProposals: CommandProposal[];
-  ledgerState: LedgerState | null;
-  backgroundJobs: BackgroundJob[];
-  sandboxUrl: string | null;
-  sandboxRefreshKey: number;
-  liveTranscript: string;
-  sessionId: string | null;
-  lastError: { code: string; message: string; recoverable: boolean } | null;
-}
-
 /**
- * Hardcoded demo: "DraftClaw Spreads Market" — real feature addition.
+ * Live demo mode: real mic → real STT → scripted AI responses.
  *
- * Scene 1 — THE ASK:  Voice → 4-node intent ledger animates
- * Scene 2 — THE PLAN: ReviewDeck with 3 edit proposals (HITL)
- * Scene 3 — THE SHIP: CommandApproval → terminal streams test + commit
- * Scene 4 — THE PR:   CommandApproval → terminal streams PR creation
+ * Connects to the real cognitive-engine WebSocket. Your voice is captured
+ * and transcribed by Deepgram normally. But instead of letting Claude
+ * respond, we intercept `turn_ended` and inject the scripted ledger,
+ * proposals, commands, and terminal output.
+ *
+ * Flow:
+ *   1. You speak into the mic (real orb animation, real transcript)
+ *   2. Backend transcribes via Deepgram, sends `transcript` messages
+ *   3. When VAD detects silence → backend sends `turn_ended`
+ *   4. We suppress all backend AI responses and inject our scripted sequence
+ *   5. You manually click HITL approvals (real ReviewDeck / CommandApproval)
+ *   6. Each approval advances to the next scripted scene
+ *
+ * Activate: pass `?demo` in the URL. Requires the cognitive-engine running.
  */
-export function useDemoMode() {
-  const [scene, setScene] = useState<DemoScene>(1);
-  const [scenePhase, setScenePhase] = useState<ScenePhase>("playing");
-  const [state, setState] = useState<DemoState>({
-    isConnected: true,
-    bargeInActive: false,
-    terminalOutput: null,
-    proposals: [],
-    commandProposals: [],
-    ledgerState: null,
-    backgroundJobs: [],
-    sandboxUrl: null,
-    sandboxRefreshKey: 0,
-    liveTranscript: "",
-    sessionId: "demo-session-001",
-    lastError: null,
-  });
 
+type DemoPhase =
+  | "idle"            // Waiting — mic on, ready for voice
+  | "listening"       // User is speaking (real transcript flowing)
+  | "scene1_ledger"   // Injecting ledger animation after voice
+  | "scene2_hitl"     // ReviewDeck proposals visible, waiting for approval
+  | "scene3_hitl"     // CommandApproval for test+commit, waiting for approval
+  | "scene3_terminal" // Terminal animation for test+commit
+  | "scene4_hitl"     // CommandApproval for PR, waiting for approval
+  | "scene4_terminal" // Terminal animation for push+PR
+  | "done";           // Demo complete — ledger stays, presenter can restart
+
+const WS_URL = import.meta.env.VITE_COGNITIVE_ENGINE_WS
+  ?? localStorage.getItem("voco-ws-url")
+  ?? "ws://localhost:8001/ws/voco-stream";
+
+export function useDemoMode() {
+  const [isConnected, setIsConnected] = useState(false);
+  const [bargeInActive] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [ledgerState, setLedgerState] = useState<LedgerState | null>(null);
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [commandProposals, setCommandProposals] = useState<CommandProposal[]>([]);
+  const [terminalOutput, setTerminalOutput] = useState<TerminalOutput | null>(null);
+  const [backgroundJobs] = useState<BackgroundJob[]>([]);
+  const [sandboxUrl, setSandboxUrl] = useState<string | null>(null);
+  const [sandboxRefreshKey] = useState(0);
+  const [claudeCodeDelegation] = useState<ClaudeCodeDelegation | null>(null);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const phaseRef = useRef<DemoPhase>("idle");
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const suppressBackend = useRef(false);
 
   const clearTimers = useCallback(() => {
     timers.current.forEach(clearTimeout);
@@ -73,219 +79,214 @@ export function useDemoMode() {
     timers.current.push(setTimeout(fn, ms));
   }, []);
 
-  // Type the transcript character by character
-  const typeTranscript = useCallback((text: string, startMs: number, onDone?: () => void) => {
-    const chars = text.split("");
-    chars.forEach((_, i) => {
-      schedule(() => {
-        setState((s) => ({ ...s, liveTranscript: text.slice(0, i + 1) }));
-      }, startMs + i * 35);
-    });
-    if (onDone) {
-      schedule(onDone, startMs + chars.length * 35 + 200);
+  // ── Send audio to the real backend ──
+  const sendAudioChunk = useCallback((bytes: Uint8Array) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(bytes.buffer);
     }
-  }, [schedule]);
-
-  // ── Scene 1: THE ASK — Voice → Intent Ledger ──
-  const runScene1 = useCallback(() => {
-    setScenePhase("playing");
-    setState((s) => ({
-      ...s,
-      terminalOutput: null,
-      proposals: [],
-      commandProposals: [],
-      ledgerState: null,
-      sandboxUrl: null,
-      liveTranscript: "",
-    }));
-
-    // Type out the DraftClaw voice command
-    typeTranscript(SCENE1_TRANSCRIPT, 500, () => {
-      // Transcript done → ledger stage 0: "Parse Intent — Analyzing voice…"
-      setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[0], liveTranscript: "" }));
-    });
-
-    // Ledger stage 1: "Search Codebase — Finding analysis files…"
-    schedule(() => {
-      setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[1] }));
-    }, 8500);
-
-    // Ledger stage 2: "Plan Changes — Mapping dependencies…"
-    schedule(() => {
-      setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[2] }));
-    }, 11000);
-
-    // Ledger stage 3: "Generate Diffs — Review ready"
-    schedule(() => {
-      setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[3] }));
-    }, 13500);
-
-    // Show proposals (ReviewDeck) — presenter must approve
-    schedule(() => {
-      setState((s) => ({ ...s, proposals: SCENE2_PROPOSALS }));
-      setScenePhase("hitl");
-    }, 15000);
-  }, [typeTranscript, schedule]);
-
-  // ── Scene 2: THE PLAN — show command approval for test+commit ──
-  const runScene2 = useCallback(() => {
-    setScenePhase("hitl");
-    setState((s) => ({
-      ...s,
-      terminalOutput: null,
-      proposals: [],
-      ledgerState: null,
-      liveTranscript: "",
-      commandProposals: [SCENE3_COMMAND],
-    }));
   }, []);
 
-  // ── Scene 3: THE SHIP — Terminal execution: test + commit ──
-  const runScene3 = useCallback(() => {
-    setScenePhase("playing");
-    setState((s) => ({
-      ...s,
-      commandProposals: [],
-      proposals: [],
-      liveTranscript: "",
-      ledgerState: SCENE3_LEDGER_STAGES[0],
-    }));
+  // ── Scene injectors ──
 
-    // Tests passed, creating branch
-    schedule(() => {
-      setState((s) => ({
-        ...s,
-        ledgerState: SCENE3_LEDGER_STAGES[1],
-        terminalOutput: { ...SCENE3_TERMINAL, isLoading: true },
-      }));
-    }, 1500);
+  const injectScene1Ledger = useCallback(() => {
+    phaseRef.current = "scene1_ledger";
+    suppressBackend.current = true;
+    setLiveTranscript("");
 
-    // Commit done — show full terminal output
-    schedule(() => {
-      setState((s) => ({
-        ...s,
-        ledgerState: SCENE3_LEDGER_STAGES[2],
-        terminalOutput: SCENE3_TERMINAL,
-      }));
-    }, 4000);
+    // Staggered ledger animation — feels like real processing
+    setLedgerState(SCENE1_LEDGER_STAGES[0]);
 
-    // Show Scene 4 command approval (PR) — presenter must approve
+    schedule(() => setLedgerState(SCENE1_LEDGER_STAGES[1]), 2500);
+    schedule(() => setLedgerState(SCENE1_LEDGER_STAGES[2]), 5000);
+    schedule(() => setLedgerState(SCENE1_LEDGER_STAGES[3]), 7500);
+
+    // Show proposals — transition to HITL
     schedule(() => {
-      setState((s) => ({
-        ...s,
-        ledgerState: null,
-        commandProposals: [SCENE4_COMMAND],
-      }));
-      setScenePhase("hitl");
-    }, 6500);
+      setProposals(SCENE2_PROPOSALS);
+      phaseRef.current = "scene2_hitl";
+    }, 9500);
   }, [schedule]);
 
-  // ── Scene 4: THE PR — Terminal execution: push + PR creation ──
-  const runScene4 = useCallback(() => {
-    setScenePhase("playing");
-    setState((s) => ({
-      ...s,
-      commandProposals: [],
-      proposals: [],
-      liveTranscript: "",
-      terminalOutput: null,
-      ledgerState: SCENE4_LEDGER_STAGES[0],
-    }));
+  const injectScene3Terminal = useCallback(() => {
+    phaseRef.current = "scene3_terminal";
+    setCommandProposals([]);
+    setLedgerState(SCENE3_LEDGER_STAGES[0]);
 
-    // Branch pushed
     schedule(() => {
-      setState((s) => ({
-        ...s,
-        ledgerState: SCENE4_LEDGER_STAGES[1],
-        terminalOutput: { ...SCENE4_TERMINAL, isLoading: true },
-      }));
-    }, 1500);
+      setLedgerState(SCENE3_LEDGER_STAGES[1]);
+      setTerminalOutput({ ...SCENE3_TERMINAL, isLoading: true });
+    }, 1800);
 
-    // PR created — show full terminal output
     schedule(() => {
-      setState((s) => ({
-        ...s,
-        ledgerState: SCENE4_LEDGER_STAGES[2],
-        terminalOutput: SCENE4_TERMINAL,
-      }));
-    }, 4000);
+      setLedgerState(SCENE3_LEDGER_STAGES[2]);
+      setTerminalOutput(SCENE3_TERMINAL);
+    }, 4500);
 
-    // Done — final ledger stays visible, waiting for presenter to loop
+    // Show PR command approval
     schedule(() => {
-      setScenePhase("waiting");
+      setLedgerState(null);
+      setCommandProposals([SCENE4_COMMAND]);
+      phaseRef.current = "scene4_hitl";
     }, 7000);
   }, [schedule]);
 
-  // ── Presenter controls ──
+  const injectScene4Terminal = useCallback(() => {
+    phaseRef.current = "scene4_terminal";
+    setCommandProposals([]);
+    setTerminalOutput(null);
+    setLedgerState(SCENE4_LEDGER_STAGES[0]);
 
-  const advanceScene = useCallback(() => {
+    schedule(() => {
+      setLedgerState(SCENE4_LEDGER_STAGES[1]);
+      setTerminalOutput({ ...SCENE4_TERMINAL, isLoading: true });
+    }, 1800);
+
+    schedule(() => {
+      setLedgerState(SCENE4_LEDGER_STAGES[2]);
+      setTerminalOutput(SCENE4_TERMINAL);
+    }, 4500);
+
+    schedule(() => {
+      phaseRef.current = "done";
+    }, 7000);
+  }, [schedule]);
+
+  // ── HITL handlers (you click these manually) ──
+
+  const submitProposalDecisions = useCallback(() => {
+    setProposals([]);
+    setLedgerState(null);
+    // Short beat before command approval appears
+    schedule(() => {
+      setTerminalOutput(null);
+      setCommandProposals([SCENE3_COMMAND]);
+      phaseRef.current = "scene3_hitl";
+    }, 400);
+  }, [schedule]);
+
+  const submitCommandDecisions = useCallback(() => {
     clearTimers();
-    if (scene < 4) {
-      setScene((s) => (s + 1) as DemoScene);
-    } else {
-      // Loop back to Scene 1
-      setScene(1);
+    if (phaseRef.current === "scene3_hitl") {
+      injectScene3Terminal();
+    } else if (phaseRef.current === "scene4_hitl") {
+      injectScene4Terminal();
     }
-  }, [scene, clearTimers]);
+  }, [clearTimers, injectScene3Terminal, injectScene4Terminal]);
 
-  // HITL: presenter approves proposals → move to next scene (command approval)
-  const handleProposalDecisions = useCallback(() => {
-    setState((s) => ({ ...s, proposals: [], ledgerState: null }));
-    setTimeout(() => {
-      clearTimers();
-      setScene(2);
-    }, 300);
-  }, [clearTimers]);
+  // ── WebSocket connection (real backend, intercepted responses) ──
 
-  // HITL: presenter approves command → advance to next scene
-  const handleCommandDecisions = useCallback(() => {
-    setState((s) => ({ ...s, commandProposals: [], ledgerState: null }));
-    setTimeout(() => {
-      clearTimers();
-      setScene((prev) => (prev + 1) as DemoScene);
-    }, 300);
-  }, [clearTimers]);
+  const connect = useCallback(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
 
-  // Run the current scene
-  useEffect(() => {
+    const ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      setIsConnected(true);
+      phaseRef.current = "idle";
+      suppressBackend.current = false;
+      console.log(`[Demo] Connected to ${WS_URL}`);
+    };
+
+    ws.onmessage = async (event) => {
+      // Binary = TTS audio — suppress in demo mode after first turn
+      if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
+        if (suppressBackend.current) return;
+        return;
+      }
+
+      try {
+        const msg = JSON.parse(event.data);
+
+        // Always allow these through
+        if (msg.type === "session_init") {
+          console.log(`[Demo] Session: ${msg.session_id}`);
+          return;
+        }
+        if (msg.type === "heartbeat") return;
+
+        // Real transcript from Deepgram — always show
+        if (msg.type === "transcript") {
+          setLiveTranscript(msg.text ?? "");
+          return;
+        }
+
+        // turn_ended = STT silence detected → inject our scripted response
+        if (msg.type === "control" && msg.action === "turn_ended") {
+          if (phaseRef.current === "idle" || phaseRef.current === "listening") {
+            injectScene1Ledger();
+          }
+          return;
+        }
+
+        // Suppress all other backend messages once demo takes over
+        if (suppressBackend.current) return;
+
+        // Before demo starts, let tts_start/tts_end through for natural mic suppression
+        if (msg.type === "control") return;
+
+      } catch {
+        // Ignore parse errors
+      }
+    };
+
+    ws.onclose = () => {
+      setIsConnected(false);
+      console.log("[Demo] Disconnected");
+    };
+
+    ws.onerror = () => {
+      console.error("[Demo] WebSocket error");
+    };
+
+    wsRef.current = ws;
+  }, [injectScene1Ledger]);
+
+  const disconnect = useCallback(() => {
     clearTimers();
-    if (scene === 1) runScene1();
-    else if (scene === 2) runScene2();
-    else if (scene === 3) runScene3();
-    else if (scene === 4) runScene4();
-    return clearTimers;
-  }, [scene, runScene1, runScene2, runScene3, runScene4, clearTimers]);
+    wsRef.current?.close();
+    wsRef.current = null;
+    setIsConnected(false);
+  }, [clearTimers]);
 
-  // No-op functions to match useVocoSocket interface
-  const noop = useCallback(() => {}, []);
-  const noopAsync = useCallback((_bytes: Uint8Array) => {}, []);
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      clearTimers();
+      wsRef.current?.close();
+    };
+  }, [clearTimers]);
+
+  const sendAuthSync = useCallback((token: string, uid: string, refreshToken?: string) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "auth_sync", token, uid, refresh_token: refreshToken || "" }));
+    }
+  }, []);
+
+  const cancelBackgroundJob = useCallback(() => {}, []);
 
   return {
-    isConnected: state.isConnected,
-    bargeInActive: state.bargeInActive,
-    sendAudioChunk: noopAsync,
-    connect: noop,
-    disconnect: noop,
-    terminalOutput: state.terminalOutput,
-    setTerminalOutput: (v: TerminalOutput | null) => setState((s) => ({ ...s, terminalOutput: v })),
-    proposals: state.proposals,
-    commandProposals: state.commandProposals,
-    submitProposalDecisions: handleProposalDecisions,
-    submitCommandDecisions: handleCommandDecisions,
-    ledgerState: state.ledgerState,
-    backgroundJobs: state.backgroundJobs,
-    wsRef: { current: null } as React.MutableRefObject<WebSocket | null>,
-    sandboxUrl: state.sandboxUrl,
-    sandboxRefreshKey: state.sandboxRefreshKey,
-    setSandboxUrl: (v: string | null) => setState((s) => ({ ...s, sandboxUrl: v })),
-    sendAuthSync: noop as unknown as (token: string, uid: string, refreshToken?: string) => void,
-    liveTranscript: state.liveTranscript,
-    sessionId: state.sessionId,
-    lastError: state.lastError,
-    // Demo-specific exports for presenter UI
-    scenePhase,
-    scene,
-    advanceScene,
-    totalScenes: 4 as const,
+    isConnected,
+    bargeInActive,
+    sendAudioChunk,
+    connect,
+    disconnect,
+    terminalOutput,
+    setTerminalOutput,
+    proposals,
+    commandProposals,
+    submitProposalDecisions,
+    submitCommandDecisions,
+    ledgerState,
+    backgroundJobs,
+    cancelBackgroundJob,
+    wsRef,
+    sandboxUrl,
+    sandboxRefreshKey,
+    setSandboxUrl,
+    sendAuthSync,
+    liveTranscript,
+    claudeCodeDelegation,
   };
 }
