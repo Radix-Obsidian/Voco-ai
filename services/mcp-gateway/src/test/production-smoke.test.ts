@@ -62,22 +62,19 @@ describe("error message parsing", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Demo mode loops all 6 scenes
+// 3. Demo mode loops all 4 scenes
 // ---------------------------------------------------------------------------
 
-describe("Demo mode 6-scene loop", () => {
-  it("scene type includes all 6 scenes", () => {
-    // Verify that the demo-script exports all 6 scenes
-    const sceneNumbers = [1, 2, 3, 4, 5, 6];
-    expect(sceneNumbers).toHaveLength(6);
-    // After scene 6, loop back to 1
-    const nextScene = (current: number) => (current % 6) + 1;
+describe("Demo mode 4-scene loop", () => {
+  it("scene type includes all 4 scenes", () => {
+    const sceneNumbers = [1, 2, 3, 4];
+    expect(sceneNumbers).toHaveLength(4);
+    // After scene 4, loop back to 1
+    const nextScene = (current: number) => (current % 4) + 1;
     expect(nextScene(1)).toBe(2);
     expect(nextScene(2)).toBe(3);
     expect(nextScene(3)).toBe(4);
-    expect(nextScene(4)).toBe(5);
-    expect(nextScene(5)).toBe(6);
-    expect(nextScene(6)).toBe(1);
+    expect(nextScene(4)).toBe(1);
   });
 
   it.skip("should have all demo script data defined", async () => {
@@ -87,6 +84,9 @@ describe("Demo mode 6-scene loop", () => {
     expect(demoScript.SCENE1_LEDGER_STAGES).toBeDefined();
     // Scene 2
     expect(demoScript.SCENE2_PROPOSALS).toBeDefined();
+    // Scene 4 (PR)
+    expect(demoScript.SCENE4_COMMAND).toBeDefined();
+    expect(demoScript.SCENE4_TERMINAL).toBeDefined();
   });
 });
 

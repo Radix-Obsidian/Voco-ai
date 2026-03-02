@@ -6,11 +6,12 @@ import type {
 } from "@/hooks/use-voco-socket";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DEMO: "Microservice Extraction" — Single Killer Flow (1:45 screencast)
+// DEMO: "DraftClaw Spreads Market" — Real Feature Addition (2:30 screencast)
 //
-// Scene 1 — THE ASK:  Speak architecture → ledger animates → intent parsed
-// Scene 2 — THE PLAN: ReviewDeck with 4 diff proposals (HITL approve)
-// Scene 3 — THE YES:  Command approval → terminal streams file creation
+// Scene 1 — THE ASK:  Voice → ledger animates → intent parsed → codebase searched
+// Scene 2 — THE PLAN: ReviewDeck with 3 edit proposals (HITL approve)
+// Scene 3 — THE SHIP: Command approval → terminal streams test + commit
+// Scene 4 — THE PR:   Command approval → terminal streams PR creation
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ---------------------------------------------------------------------------
@@ -18,255 +19,310 @@ import type {
 // ---------------------------------------------------------------------------
 
 export const SCENE1_TRANSCRIPT =
-  "Extract the auth module into its own microservice with JWT validation, rate limiting, and a shared proto contract";
+  "Add spreads market support to DraftClaw's EV analysis. Right now it only does moneyline and totals — spreads is the biggest market and we're leaving edge on the table.";
 
 export const SCENE1_LEDGER_STAGES: LedgerState[] = [
   {
-    domain: "architecture",
+    domain: "code_generation",
     nodes: [
-      { id: "a1", iconType: "Database", title: "Parse Intent", description: "Analyzing voice…", status: "active" },
-      { id: "a2", iconType: "FileCode2", title: "Plan Arch", description: "Awaiting", status: "pending" },
-      { id: "a3", iconType: "Terminal", title: "Gen Diffs", description: "Awaiting", status: "pending" },
-      { id: "a4", iconType: "HardDrive", title: "Propose", description: "Awaiting", status: "pending" },
+      { id: "s1", iconType: "Database", title: "Parse Intent", description: "Analyzing voice…", status: "active" },
+      { id: "s2", iconType: "FileCode2", title: "Search Codebase", description: "Awaiting", status: "pending" },
+      { id: "s3", iconType: "Terminal", title: "Plan Changes", description: "Awaiting", status: "pending" },
+      { id: "s4", iconType: "HardDrive", title: "Generate Diffs", description: "Awaiting", status: "pending" },
     ],
   },
   {
-    domain: "architecture",
+    domain: "code_generation",
     nodes: [
-      { id: "a1", iconType: "Database", title: "Parse Intent", description: "Auth extraction", status: "completed" },
-      { id: "a2", iconType: "FileCode2", title: "Plan Arch", description: "Mapping deps…", status: "active" },
-      { id: "a3", iconType: "Terminal", title: "Gen Diffs", description: "Awaiting", status: "pending" },
-      { id: "a4", iconType: "HardDrive", title: "Propose", description: "Awaiting", status: "pending" },
+      { id: "s1", iconType: "Database", title: "Parse Intent", description: "Spread market support", status: "completed" },
+      { id: "s2", iconType: "FileCode2", title: "Search Codebase", description: "Finding analysis files…", status: "active" },
+      { id: "s3", iconType: "Terminal", title: "Plan Changes", description: "Awaiting", status: "pending" },
+      { id: "s4", iconType: "HardDrive", title: "Generate Diffs", description: "Awaiting", status: "pending" },
     ],
   },
   {
-    domain: "architecture",
+    domain: "code_generation",
     nodes: [
-      { id: "a1", iconType: "Database", title: "Parse Intent", description: "Auth extraction", status: "completed" },
-      { id: "a2", iconType: "FileCode2", title: "Plan Arch", description: "4 files planned", status: "completed" },
-      { id: "a3", iconType: "Terminal", title: "Gen Diffs", description: "Writing code…", status: "active" },
-      { id: "a4", iconType: "HardDrive", title: "Propose", description: "Awaiting", status: "pending" },
+      { id: "s1", iconType: "Database", title: "Parse Intent", description: "Spread market support", status: "completed" },
+      { id: "s2", iconType: "FileCode2", title: "Search Codebase", description: "3 files found", status: "completed" },
+      { id: "s3", iconType: "Terminal", title: "Plan Changes", description: "Mapping dependencies…", status: "active" },
+      { id: "s4", iconType: "HardDrive", title: "Generate Diffs", description: "Awaiting", status: "pending" },
     ],
   },
   {
-    domain: "architecture",
+    domain: "code_generation",
     nodes: [
-      { id: "a1", iconType: "Database", title: "Parse Intent", description: "Auth extraction", status: "completed" },
-      { id: "a2", iconType: "FileCode2", title: "Plan Arch", description: "4 files planned", status: "completed" },
-      { id: "a3", iconType: "Terminal", title: "Gen Diffs", description: "Complete", status: "completed" },
-      { id: "a4", iconType: "HardDrive", title: "Propose", description: "Review ready", status: "active" },
+      { id: "s1", iconType: "Database", title: "Parse Intent", description: "Spread market support", status: "completed" },
+      { id: "s2", iconType: "FileCode2", title: "Search Codebase", description: "3 files found", status: "completed" },
+      { id: "s3", iconType: "Terminal", title: "Plan Changes", description: "3 files, 4 edits", status: "completed" },
+      { id: "s4", iconType: "HardDrive", title: "Generate Diffs", description: "Review ready", status: "active" },
     ],
   },
 ];
 
 // ---------------------------------------------------------------------------
-// Scene 2 — "The Plan" — ReviewDeck with 4 diffs (HITL)
+// Scene 2 — "The Plan" — ReviewDeck with 3 real DraftClaw edits (HITL)
 // ---------------------------------------------------------------------------
 
 export const SCENE2_PROPOSALS: Proposal[] = [
   {
-    proposal_id: "ms-p1",
-    action: "create_file",
-    file_path: "auth-service/src/index.ts",
-    content: `import express from "express";
-import { authRouter } from "./routes";
-import { rateLimiter } from "./rate-limiter";
-import { loadProtoDefinitions } from "./proto";
-
-const app = express();
-const PORT = process.env.AUTH_SERVICE_PORT ?? 4001;
-
-// Middleware
-app.use(express.json());
-app.use(rateLimiter);
-
-// gRPC service definitions
-const proto = loadProtoDefinitions();
-
-// Routes
-app.use("/auth", authRouter);
-
-// Health check
-app.get("/health", (_req, res) => res.json({ status: "ok", service: "auth" }));
-
-app.listen(PORT, () => {
-  console.log(\`[auth-service] Running on :\${PORT}\`);
-});`,
-    description: "New microservice entry point — Express + rate limiter + gRPC proto loader",
-    project_root: "/home/user/shopwave",
-    status: "pending",
-  },
-  {
-    proposal_id: "ms-p2",
-    action: "create_file",
-    file_path: "auth-service/src/rate-limiter.ts",
-    content: `import { Request, Response, NextFunction } from "express";
-
-interface Window { timestamps: number[]; count: number; }
-
-const windows = new Map<string, Window>();
-const WINDOW_MS = 60_000;
-
-const ROLE_LIMITS: Record<string, number> = {
-  admin: 1000,
-  user: 100,
-  anonymous: 20,
-};
-
-export function rateLimiter(req: Request, res: Response, next: NextFunction) {
-  const key = req.ip ?? "anonymous";
-  const role = (req as any).user?.role ?? "anonymous";
-  const limit = ROLE_LIMITS[role] ?? ROLE_LIMITS.anonymous;
-  const now = Date.now();
-
-  let win = windows.get(key) ?? { timestamps: [], count: 0 };
-  win.timestamps = win.timestamps.filter((t) => now - t < WINDOW_MS);
-  win.count = win.timestamps.length;
-
-  if (win.count >= limit) {
-    return res.status(429).json({
-      error: "Rate limit exceeded",
-      retryAfter: Math.ceil((win.timestamps[0] + WINDOW_MS - now) / 1000),
-    });
-  }
-
-  win.timestamps.push(now);
-  win.count++;
-  windows.set(key, win);
-
-  res.setHeader("X-RateLimit-Limit", limit);
-  res.setHeader("X-RateLimit-Remaining", limit - win.count);
-  next();
-}`,
-    description: "Sliding-window rate limiter with per-role limits (admin: 1000, user: 100, anon: 20)",
-    project_root: "/home/user/shopwave",
-    status: "pending",
-  },
-  {
-    proposal_id: "ms-p3",
-    action: "create_file",
-    file_path: "proto/auth.proto",
-    content: `syntax = "proto3";
-
-package auth;
-
-service AuthService {
-  rpc ValidateToken (TokenRequest) returns (TokenResponse);
-  rpc RefreshToken  (RefreshRequest) returns (TokenResponse);
-  rpc RevokeToken   (RevokeRequest) returns (RevokeResponse);
-}
-
-message TokenRequest {
-  string token = 1;
-}
-
-message TokenResponse {
-  bool   valid   = 1;
-  string user_id = 2;
-  string role    = 3;
-  int64  exp     = 4;
-}
-
-message RefreshRequest {
-  string refresh_token = 1;
-}
-
-message RevokeRequest {
-  string token = 1;
-}
-
-message RevokeResponse {
-  bool revoked = 1;
-}`,
-    description: "Shared gRPC contract — ValidateToken, RefreshToken, RevokeToken",
-    project_root: "/home/user/shopwave",
-    status: "pending",
-  },
-  {
-    proposal_id: "ms-p4",
+    proposal_id: "dc-p1",
     action: "edit_file",
-    file_path: "src/middleware/auth.ts",
-    content: `import { credentials } from "@grpc/grpc-js";
-import { AuthServiceClient } from "../proto/auth_grpc_pb";
+    file_path: "extensions/draft-claw/src/types.ts",
+    content: `export interface Outcome {
+  name: string;
+  price: number;
+  point?: number;
+}
 
-const authClient = new AuthServiceClient(
-  process.env.AUTH_SERVICE_URL ?? "localhost:4001",
-  credentials.createInsecure()
-);
+export interface Market {
+  key: string;
+  last_update: string;
+  outcomes: Outcome[];
+}
 
-export async function authMiddleware(req, res, next) {
-  const token = req.headers.authorization?.split("Bearer ")[1];
-  if (!token) return res.status(401).json({ error: "Missing token" });
+export interface Bookmaker {
+  key: string;
+  title: string;
+  last_update: string;
+  markets: Market[];
+}
 
-  const response = await authClient.validateToken({ token });
-  if (!response.valid) return res.status(401).json({ error: "Invalid token" });
+export type Recommendation =
+  | "Bet Home"
+  | "Bet Away"
+  | "Bet Over"
+  | "Bet Under"
+  | "Bet Spread";
 
-  req.user = { userId: response.user_id, role: response.role };
-  next();
+export type Confidence = "High" | "Medium" | "Low";`,
+    description: 'Add "Bet Spread" to the Recommendation union type',
+    project_root: "~/dev/DraftClaw",
+    status: "pending",
+  },
+  {
+    proposal_id: "dc-p2",
+    action: "edit_file",
+    file_path: "extensions/draft-claw/src/analysis.ts",
+    content: `// ── Add "spreads" to market loop (was: ["h2h", "totals"]) ──
+for (const marketKey of ["h2h", "spreads", "totals"]) {
+  const sharpProbs = getSharpProbabilities(event.bookmakers, marketKey);
+  if (!sharpProbs) continue;
+
+  for (const softBook of softBooks) {
+    const market = softBook.markets.find((m) => m.key === marketKey);
+    if (!market) continue;
+
+    for (const outcome of market.outcomes) {
+      // ... existing EV calculation ...
+
+      // ── New: spread-specific recommendation ──
+      let recommendation: Recommendation;
+      if (marketKey === "h2h") {
+        recommendation = isHomeTeam ? "Bet Home" : "Bet Away";
+      } else if (marketKey === "spreads") {
+        recommendation = "Bet Spread";
+      } else {
+        recommendation = outcome.name.toLowerCase().includes("over")
+          ? "Bet Over" : "Bet Under";
+      }
+
+      // ── New: spread reasoning ──
+      if (marketKey === "spreads" && outcome.point !== undefined) {
+        const spread = outcome.point;
+        if (spread > 0) {
+          parts.push(
+            \`Getting +\${spread} pts with \${edge.toFixed(1)}% edge — \` +
+            \`sharp consensus \${(trueProb * 100).toFixed(0)}% vs implied \${(impliedProb * 100).toFixed(0)}%\`
+          );
+        } else {
+          parts.push(
+            \`Laying \${Math.abs(spread)} pts but \${edge.toFixed(1)}% edge justifies — \` +
+            \`sharp \${(trueProb * 100).toFixed(0)}% vs market \${(impliedProb * 100).toFixed(0)}%\`
+          );
+        }
+      }
+    }
+  }
 }`,
-    description: "Replaced 35-line JWT logic with 2-line gRPC call to auth-service",
-    project_root: "/home/user/shopwave",
+    description: "Add spreads to market loop + spread recommendation handler + spread-specific reasoning",
+    project_root: "~/dev/DraftClaw",
+    status: "pending",
+  },
+  {
+    proposal_id: "dc-p3",
+    action: "edit_file",
+    file_path: "extensions/draft-claw/index.ts",
+    content: `const ClawSheetOutputSchema = z.object({
+  timestamp: z.string(),
+  mode: z.enum(["mock", "live"]),
+  analyses: z.array(
+    z.object({
+      game: z.string(),
+      market: z.string(),
+      recommendation: z.enum([
+        "Bet Home",
+        "Bet Away",
+        "Bet Over",
+        "Bet Under",
+        "Bet Spread",
+      ]),
+      impliedProbability: z.number(),
+      clawProbability: z.number(),
+      edge: z.number(),
+      confidence: z.enum(["High", "Medium", "Low"]),
+      reasoning: z.string(),
+      deepLink: z.string(),
+    })
+  ),
+  summary: z.object({
+    totalGames: z.number(),
+    opportunitiesFound: z.number(),
+    highConfidence: z.number(),
+  }),
+});`,
+    description: 'Add "Bet Spread" to Zod validation schema for ClawSheet output',
+    project_root: "~/dev/DraftClaw",
     status: "pending",
   },
 ];
 
 // ---------------------------------------------------------------------------
-// Scene 3 — "The Yes" — Command Approval + Terminal Execution
+// Scene 3 — "The Ship" — Command Approval + Terminal (test + commit)
 // ---------------------------------------------------------------------------
 
 export const SCENE3_COMMAND: CommandProposal = {
-  command_id: "ms-cmd1",
+  command_id: "dc-cmd1",
   command:
-    "mkdir -p auth-service/src proto && cp src/middleware/auth.ts auth-service/src/ && protoc --ts_out=. proto/auth.proto",
-  description: "Create auth-service directory, copy files, compile proto contract",
-  project_path: "/home/user/shopwave",
+    'cd extensions/draft-claw && pnpm test && git checkout -b feat/spreads-market && git add -A && git commit -m "feat: add spreads market EV analysis"',
+  description: "Run tests, create feature branch, and commit all changes",
+  project_path: "~/dev/DraftClaw",
   status: "pending",
 };
 
 export const SCENE3_TERMINAL: TerminalOutput = {
   command:
-    "$ mkdir -p auth-service/src proto && cp src/middleware/auth.ts auth-service/src/ && protoc --ts_out=. proto/auth.proto",
-  output: `Creating auth-service/src/ …
-Creating proto/ …
+    '$ cd extensions/draft-claw && pnpm test && git checkout -b feat/spreads-market && git add -A && git commit -m "feat: add spreads market EV analysis"',
+  output: `> draft-claw@0.4.2 test
+> vitest run
 
-✓ auth-service/src/index.ts         created  (28 lines)
-✓ auth-service/src/rate-limiter.ts  created  (42 lines)
-✓ proto/auth.proto                  created  (31 lines)
-✓ src/middleware/auth.ts            updated  (35 → 16 lines)
+ ✓ src/__tests__/analysis.test.ts (12 tests) 340ms
+   ✓ analyzes h2h markets correctly
+   ✓ analyzes totals markets correctly
+   ✓ analyzes spreads markets correctly
+   ✓ detects positive EV on spread with sharp edge
+   ✓ skips negative EV spreads
+   ✓ builds spread reasoning for underdog getting points
+   ✓ builds spread reasoning for favorite laying points
+   ✓ validates Recommendation union type
+   ✓ handles missing odds gracefully
+   ✓ respects minEdgePercentage threshold
+   ✓ returns correct market keys
+   ✓ Zod schema validates "Bet Spread"
 
-Compiling proto/auth.proto …
-✓ proto/auth_grpc_pb.ts generated
-✓ proto/auth_pb.ts generated
+ ✓ src/__tests__/bookmakers.test.ts (4 tests) 28ms
 
-4 files changed · 1 service extracted · 0 errors`,
+ Test Files  2 passed (2)
+      Tests  16 passed (16)
+   Start at  14:32:07
+   Duration  1.84s
+
+Switched to a new branch 'feat/spreads-market'
+
+[feat/spreads-market 3a1f9cb] feat: add spreads market EV analysis
+ 3 files changed, 47 insertions(+), 3 deletions(-)`,
   isLoading: false,
   scope: "local",
 };
 
 export const SCENE3_LEDGER_STAGES: LedgerState[] = [
   {
-    domain: "terminal_execution",
+    domain: "ship",
     nodes: [
-      { id: "e1", iconType: "Terminal", title: "Execute", description: "Creating files…", status: "active" },
-      { id: "e2", iconType: "FileCode2", title: "Compile", description: "Awaiting", status: "pending" },
-      { id: "e3", iconType: "HardDrive", title: "Done", description: "Awaiting", status: "pending" },
+      { id: "t1", iconType: "Terminal", title: "Tests", description: "Running vitest…", status: "active" },
+      { id: "t2", iconType: "GitBranch", title: "Branch", description: "Awaiting", status: "pending" },
+      { id: "t3", iconType: "HardDrive", title: "Commit", description: "Awaiting", status: "pending" },
     ],
   },
   {
-    domain: "terminal_execution",
+    domain: "ship",
     nodes: [
-      { id: "e1", iconType: "Terminal", title: "Execute", description: "4 files written", status: "completed" },
-      { id: "e2", iconType: "FileCode2", title: "Compile", description: "protoc running…", status: "active" },
-      { id: "e3", iconType: "HardDrive", title: "Done", description: "Awaiting", status: "pending" },
+      { id: "t1", iconType: "Terminal", title: "Tests", description: "16 passed", status: "completed" },
+      { id: "t2", iconType: "GitBranch", title: "Branch", description: "Creating branch…", status: "active" },
+      { id: "t3", iconType: "HardDrive", title: "Commit", description: "Awaiting", status: "pending" },
     ],
   },
   {
-    domain: "terminal_execution",
+    domain: "ship",
     nodes: [
-      { id: "e1", iconType: "Terminal", title: "Execute", description: "4 files written", status: "completed" },
-      { id: "e2", iconType: "FileCode2", title: "Compile", description: "Proto compiled", status: "completed" },
-      { id: "e3", iconType: "HardDrive", title: "Done", description: "Service extracted", status: "completed" },
+      { id: "t1", iconType: "Terminal", title: "Tests", description: "16 passed", status: "completed" },
+      { id: "t2", iconType: "GitBranch", title: "Branch", description: "feat/spreads-market", status: "completed" },
+      { id: "t3", iconType: "HardDrive", title: "Commit", description: "3a1f9cb", status: "completed" },
     ],
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Scene 4 — "The PR" — Command Approval + Terminal (push + PR)
+// ---------------------------------------------------------------------------
+
+export const SCENE4_COMMAND: CommandProposal = {
+  command_id: "dc-cmd2",
+  command:
+    'git push -u origin feat/spreads-market && gh pr create --title "feat: add spreads market EV analysis" --body "Adds spread betting support to the EV analysis pipeline.\n\n- Spread market loop + reasoning\n- Zod schema + type updates\n- 16/16 tests passing"',
+  description: "Push branch and open pull request on GitHub",
+  project_path: "~/dev/DraftClaw",
+  status: "pending",
+};
+
+export const SCENE4_TERMINAL: TerminalOutput = {
+  command:
+    '$ git push -u origin feat/spreads-market && gh pr create --title "feat: add spreads market EV analysis" --body "..."',
+  output: `Enumerating objects: 9, done.
+Counting objects: 100% (9/9), done.
+Delta compression using up to 10 threads
+Compressing objects: 100% (5/5), done.
+Writing objects: 100% (5/5), 1.83 KiB | 1.83 MiB/s, done.
+Total 5 (delta 3), reused 0 (delta 0), pack-reused 0
+remote: Resolving deltas: 100% (3/3), completed with 3 local objects.
+remote:
+remote: Create a pull request for 'feat/spreads-market' on GitHub by visiting:
+remote:   https://github.com/Radix-Obsidian/DraftClaw/pull/new/feat/spreads-market
+remote:
+To github.com:Radix-Obsidian/DraftClaw.git
+ * [new branch]      feat/spreads-market -> feat/spreads-market
+branch 'feat/spreads-market' set up to track 'origin/feat/spreads-market'.
+
+Creating pull request for feat/spreads-market into main in Radix-Obsidian/DraftClaw
+
+https://github.com/Radix-Obsidian/DraftClaw/pull/42`,
+  isLoading: false,
+  scope: "local",
+};
+
+export const SCENE4_LEDGER_STAGES: LedgerState[] = [
+  {
+    domain: "pull_request",
+    nodes: [
+      { id: "pr1", iconType: "GitBranch", title: "Push", description: "Pushing to origin…", status: "active" },
+      { id: "pr2", iconType: "Github", title: "PR", description: "Awaiting", status: "pending" },
+      { id: "pr3", iconType: "HardDrive", title: "Done", description: "Awaiting", status: "pending" },
+    ],
+  },
+  {
+    domain: "pull_request",
+    nodes: [
+      { id: "pr1", iconType: "GitBranch", title: "Push", description: "Branch pushed", status: "completed" },
+      { id: "pr2", iconType: "Github", title: "PR", description: "Opening PR #42…", status: "active" },
+      { id: "pr3", iconType: "HardDrive", title: "Done", description: "Awaiting", status: "pending" },
+    ],
+  },
+  {
+    domain: "pull_request",
+    nodes: [
+      { id: "pr1", iconType: "GitBranch", title: "Push", description: "Branch pushed", status: "completed" },
+      { id: "pr2", iconType: "Github", title: "PR", description: "PR #42 opened", status: "completed" },
+      { id: "pr3", iconType: "HardDrive", title: "Done", description: "Ship it!", status: "completed" },
+    ],
+  },
+];

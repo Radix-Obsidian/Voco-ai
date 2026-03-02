@@ -13,9 +13,12 @@ import {
   SCENE3_COMMAND,
   SCENE3_TERMINAL,
   SCENE3_LEDGER_STAGES,
+  SCENE4_COMMAND,
+  SCENE4_TERMINAL,
+  SCENE4_LEDGER_STAGES,
 } from "@/data/demo-script";
 
-type DemoScene = 1 | 2 | 3;
+type DemoScene = 1 | 2 | 3 | 4;
 type ScenePhase = "playing" | "waiting" | "hitl";
 
 interface DemoState {
@@ -34,11 +37,12 @@ interface DemoState {
 }
 
 /**
- * Hardcoded demo: "Microservice Extraction" single killer flow.
+ * Hardcoded demo: "DraftClaw Spreads Market" — real feature addition.
  *
  * Scene 1 — THE ASK:  Voice → 4-node intent ledger animates
- * Scene 2 — THE PLAN: ReviewDeck with 4 diff proposals (HITL)
- * Scene 3 — THE YES:  CommandApproval → terminal streams file creation
+ * Scene 2 — THE PLAN: ReviewDeck with 3 edit proposals (HITL)
+ * Scene 3 — THE SHIP: CommandApproval → terminal streams test + commit
+ * Scene 4 — THE PR:   CommandApproval → terminal streams PR creation
  */
 export function useDemoMode() {
   const [scene, setScene] = useState<DemoScene>(1);
@@ -95,37 +99,35 @@ export function useDemoMode() {
       liveTranscript: "",
     }));
 
-    // Type out: "Extract the auth module into its own microservice…"
+    // Type out the DraftClaw voice command
     typeTranscript(SCENE1_TRANSCRIPT, 500, () => {
       // Transcript done → ledger stage 0: "Parse Intent — Analyzing voice…"
       setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[0], liveTranscript: "" }));
     });
 
-    // Ledger stage 1: "Plan Arch — Mapping deps…"
+    // Ledger stage 1: "Search Codebase — Finding analysis files…"
     schedule(() => {
       setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[1] }));
-    }, 6000);
+    }, 8500);
 
-    // Ledger stage 2: "Gen Diffs — Writing code…"
+    // Ledger stage 2: "Plan Changes — Mapping dependencies…"
     schedule(() => {
       setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[2] }));
-    }, 8000);
+    }, 11000);
 
-    // Ledger stage 3: "Propose — Review ready" → transition to Scene 2 (HITL)
+    // Ledger stage 3: "Generate Diffs — Review ready"
     schedule(() => {
       setState((s) => ({ ...s, ledgerState: SCENE1_LEDGER_STAGES[3] }));
-    }, 10000);
+    }, 13500);
 
     // Show proposals (ReviewDeck) — presenter must approve
     schedule(() => {
       setState((s) => ({ ...s, proposals: SCENE2_PROPOSALS }));
       setScenePhase("hitl");
-    }, 11000);
+    }, 15000);
   }, [typeTranscript, schedule]);
 
-  // ── Scene 2: THE PLAN — ReviewDeck diffs (entered via HITL from Scene 1) ──
-  // This scene is triggered when presenter approves proposals in Scene 1.
-  // After approval → show CommandApproval for terminal execution.
+  // ── Scene 2: THE PLAN — show command approval for test+commit ──
   const runScene2 = useCallback(() => {
     setScenePhase("hitl");
     setState((s) => ({
@@ -138,7 +140,7 @@ export function useDemoMode() {
     }));
   }, []);
 
-  // ── Scene 3: THE YES — Terminal execution streams file creation ──
+  // ── Scene 3: THE SHIP — Terminal execution: test + commit ──
   const runScene3 = useCallback(() => {
     setScenePhase("playing");
     setState((s) => ({
@@ -149,7 +151,7 @@ export function useDemoMode() {
       ledgerState: SCENE3_LEDGER_STAGES[0],
     }));
 
-    // Files being created
+    // Tests passed, creating branch
     schedule(() => {
       setState((s) => ({
         ...s,
@@ -158,7 +160,7 @@ export function useDemoMode() {
       }));
     }, 1500);
 
-    // Proto compiling
+    // Commit done — show full terminal output
     schedule(() => {
       setState((s) => ({
         ...s,
@@ -167,18 +169,58 @@ export function useDemoMode() {
       }));
     }, 4000);
 
-    // Done — wait for presenter to loop or end
+    // Show Scene 4 command approval (PR) — presenter must approve
     schedule(() => {
-      setState((s) => ({ ...s, ledgerState: null }));
-      setScenePhase("waiting");
+      setState((s) => ({
+        ...s,
+        ledgerState: null,
+        commandProposals: [SCENE4_COMMAND],
+      }));
+      setScenePhase("hitl");
     }, 6500);
+  }, [schedule]);
+
+  // ── Scene 4: THE PR — Terminal execution: push + PR creation ──
+  const runScene4 = useCallback(() => {
+    setScenePhase("playing");
+    setState((s) => ({
+      ...s,
+      commandProposals: [],
+      proposals: [],
+      liveTranscript: "",
+      terminalOutput: null,
+      ledgerState: SCENE4_LEDGER_STAGES[0],
+    }));
+
+    // Branch pushed
+    schedule(() => {
+      setState((s) => ({
+        ...s,
+        ledgerState: SCENE4_LEDGER_STAGES[1],
+        terminalOutput: { ...SCENE4_TERMINAL, isLoading: true },
+      }));
+    }, 1500);
+
+    // PR created — show full terminal output
+    schedule(() => {
+      setState((s) => ({
+        ...s,
+        ledgerState: SCENE4_LEDGER_STAGES[2],
+        terminalOutput: SCENE4_TERMINAL,
+      }));
+    }, 4000);
+
+    // Done — final ledger stays visible, waiting for presenter to loop
+    schedule(() => {
+      setScenePhase("waiting");
+    }, 7000);
   }, [schedule]);
 
   // ── Presenter controls ──
 
   const advanceScene = useCallback(() => {
     clearTimers();
-    if (scene < 3) {
+    if (scene < 4) {
       setScene((s) => (s + 1) as DemoScene);
     } else {
       // Loop back to Scene 1
@@ -186,7 +228,7 @@ export function useDemoMode() {
     }
   }, [scene, clearTimers]);
 
-  // HITL: presenter approves proposals → move to Scene 2 (command approval)
+  // HITL: presenter approves proposals → move to next scene (command approval)
   const handleProposalDecisions = useCallback(() => {
     setState((s) => ({ ...s, proposals: [], ledgerState: null }));
     setTimeout(() => {
@@ -195,12 +237,12 @@ export function useDemoMode() {
     }, 300);
   }, [clearTimers]);
 
-  // HITL: presenter approves command → move to Scene 3 (terminal execution)
+  // HITL: presenter approves command → advance to next scene
   const handleCommandDecisions = useCallback(() => {
     setState((s) => ({ ...s, commandProposals: [], ledgerState: null }));
     setTimeout(() => {
       clearTimers();
-      setScene(3);
+      setScene((prev) => (prev + 1) as DemoScene);
     }, 300);
   }, [clearTimers]);
 
@@ -210,8 +252,9 @@ export function useDemoMode() {
     if (scene === 1) runScene1();
     else if (scene === 2) runScene2();
     else if (scene === 3) runScene3();
+    else if (scene === 4) runScene4();
     return clearTimers;
-  }, [scene, runScene1, runScene2, runScene3, clearTimers]);
+  }, [scene, runScene1, runScene2, runScene3, runScene4, clearTimers]);
 
   // No-op functions to match useVocoSocket interface
   const noop = useCallback(() => {}, []);
@@ -243,6 +286,6 @@ export function useDemoMode() {
     scenePhase,
     scene,
     advanceScene,
-    totalScenes: 3 as const,
+    totalScenes: 4 as const,
   };
 }
