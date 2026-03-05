@@ -39,8 +39,7 @@ class DeepgramSTT:
         import httpx
 
         if not self._api_key:
-            logger.error("[STT] DEEPGRAM_API_KEY not set — cannot transcribe.")
-            return ""
+            raise ValueError("DEEPGRAM_API_KEY not set — microphone input cannot be transcribed. Check your API keys in Settings.")
 
         url = (
             f"https://api.deepgram.com/v1/listen"

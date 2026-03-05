@@ -1,13 +1,16 @@
 import { useState, useRef, useCallback } from "react";
+import { useToast } from "@/hooks/use-toast";
 
 export function useAudioCapture(
   sendAudioChunk: ((bytes: Uint8Array) => void) | null
 ) {
   const [isCapturing, setIsCapturing] = useState(false);
+  const [micError, setMicError] = useState<string | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const { toast } = useToast();
 
   const stopCapture = useCallback(() => {
     workletNodeRef.current?.port.close();
@@ -29,15 +32,35 @@ export function useAudioCapture(
 
   const startCapture = useCallback(async () => {
     if (!sendAudioChunk) return;
+    setMicError(null);
 
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      const msg = err instanceof DOMException && err.name === "NotAllowedError"
+        ? "Microphone access denied. Please allow mic access in your browser/OS settings and try again."
+        : `Microphone error: ${err instanceof Error ? err.message : String(err)}`;
+      setMicError(msg);
+      toast({ title: "Microphone Unavailable", description: msg, variant: "destructive" });
+      console.error("[AudioCapture]", msg);
+      return;
+    }
     streamRef.current = stream;
 
-    const ctx = new AudioContext({ sampleRate: 16000 });
-    audioContextRef.current = ctx;
-
-    // Load AudioWorklet processor (512 samples = 32ms buffer)
-    await ctx.audioWorklet.addModule("/pcm-processor.js");
+    let ctx: AudioContext;
+    try {
+      ctx = new AudioContext({ sampleRate: 16000 });
+      audioContextRef.current = ctx;
+      await ctx.audioWorklet.addModule("/pcm-processor.js");
+    } catch (err) {
+      stream.getTracks().forEach((t) => t.stop());
+      const msg = `Audio setup failed: ${err instanceof Error ? err.message : String(err)}`;
+      setMicError(msg);
+      toast({ title: "Audio Error", description: msg, variant: "destructive" });
+      console.error("[AudioCapture]", msg);
+      return;
+    }
 
     const source = ctx.createMediaStreamSource(stream);
     sourceRef.current = source;
@@ -55,7 +78,7 @@ export function useAudioCapture(
 
     setIsCapturing(true);
     console.log("[AudioCapture] Started — 16kHz PCM-16 via AudioWorklet (32ms buffer)");
-  }, [sendAudioChunk]);
+  }, [sendAudioChunk, toast]);
 
-  return { isCapturing, startCapture, stopCapture };
+  return { isCapturing, startCapture, stopCapture, micError };
 }

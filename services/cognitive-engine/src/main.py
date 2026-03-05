@@ -509,7 +509,17 @@ async def voco_stream(websocket: WebSocket) -> None:
                 audio_buffer = bytearray()
                 return
 
-            transcript = await stt.transcribe_once(bytes(audio_buffer))
+            try:
+                transcript = await stt.transcribe_once(bytes(audio_buffer))
+            except ValueError as stt_err:
+                audio_buffer = bytearray()
+                await send_error(websocket, VocoError(
+                    code=ErrorCode.E_STT_FAILED,
+                    message=str(stt_err),
+                    recoverable=False,
+                    session_id=thread_id,
+                ))
+                return
             audio_buffer = bytearray()
 
             if not transcript or len(transcript.strip()) < 2:
@@ -584,20 +594,27 @@ async def voco_stream(websocket: WebSocket) -> None:
                     })
                     logger.info("[CoWork] IDE-native edit sent for %s", p.get("file_path", ""))
 
-            # TTS: announce proposals
+            # TTS: announce proposals (non-fatal — HITL must proceed even if TTS fails)
             desc_list = [p.get("description", p.get("file_path", "")) for p in proposals]
             summary_text = f"I have {len(proposals)} proposal{'s' if len(proposals) != 1 else ''} for your review. {'. '.join(desc_list)}. Say approve or reject."
-            await websocket.send_json({"type": "control", "action": "tts_start", "text": summary_text, "tts_active": True})
-            tts_active = True
-            vad.suppress(True)
-            async for audio_chunk in tts.synthesize_stream(summary_text):
-                await websocket.send_bytes(audio_chunk)
-            await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
-            await asyncio.sleep(TTS_GRACE_PERIOD)
-            tts_active = False
-            vad.suppress(False)
-            vad.reset()
-            audio_buffer = bytearray()
+            try:
+                await websocket.send_json({"type": "control", "action": "tts_start", "text": summary_text, "tts_active": True})
+                tts_active = True
+                vad.suppress(True)
+                async for audio_chunk in tts.synthesize_stream(summary_text):
+                    await websocket.send_bytes(audio_chunk)
+            except Exception as tts_exc:
+                logger.warning("[Pipeline] TTS failed during proposal announcement: %s", tts_exc)
+            finally:
+                try:
+                    await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
+                except Exception:
+                    pass
+                await asyncio.sleep(TTS_GRACE_PERIOD)
+                tts_active = False
+                vad.suppress(False)
+                vad.reset()
+                audio_buffer = bytearray()
 
             # Wait for proposal_decision from frontend (filtered receive)
             decisions = []
@@ -661,20 +678,27 @@ async def voco_stream(websocket: WebSocket) -> None:
                     "project_path": c.get("project_path", project_path),
                 })
 
-            # TTS: announce commands
+            # TTS: announce commands (non-fatal — HITL must proceed even if TTS fails)
             cmd_descs = [c.get("description", c.get("command", "")) for c in commands]
             cmd_summary = f"I need to run {len(commands)} command{'s' if len(commands) != 1 else ''}. {'. '.join(cmd_descs)}. Approve or reject."
-            await websocket.send_json({"type": "control", "action": "tts_start", "text": cmd_summary, "tts_active": True})
-            tts_active = True
-            vad.suppress(True)
-            async for audio_chunk in tts.synthesize_stream(cmd_summary):
-                await websocket.send_bytes(audio_chunk)
-            await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
-            await asyncio.sleep(TTS_GRACE_PERIOD)
-            tts_active = False
-            vad.suppress(False)
-            vad.reset()
-            audio_buffer = bytearray()
+            try:
+                await websocket.send_json({"type": "control", "action": "tts_start", "text": cmd_summary, "tts_active": True})
+                tts_active = True
+                vad.suppress(True)
+                async for audio_chunk in tts.synthesize_stream(cmd_summary):
+                    await websocket.send_bytes(audio_chunk)
+            except Exception as tts_exc:
+                logger.warning("[Pipeline] TTS failed during command announcement: %s", tts_exc)
+            finally:
+                try:
+                    await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
+                except Exception:
+                    pass
+                await asyncio.sleep(TTS_GRACE_PERIOD)
+                tts_active = False
+                vad.suppress(False)
+                vad.reset()
+                audio_buffer = bytearray()
 
             # Wait for command_decision from frontend (filtered receive)
             cmd_decisions = []
@@ -1219,10 +1243,21 @@ async def voco_stream(websocket: WebSocket) -> None:
                 await _on_turn_end()
             except Exception as exc:
                 logger.error("[Pipeline] Turn-end pipeline error: %s", exc, exc_info=True)
+                # Parse structured error codes from orchestrator_node
+                exc_msg = str(exc)
+                if exc_msg.startswith("E_MODEL_OVERLOADED:"):
+                    err_code = ErrorCode.E_MODEL_OVERLOADED
+                    err_msg = exc_msg.split(":", 1)[1].strip()
+                elif exc_msg.startswith("E_AUTH_EXPIRED:"):
+                    err_code = ErrorCode.E_AUTH_EXPIRED
+                    err_msg = exc_msg.split(":", 1)[1].strip()
+                else:
+                    err_code = ErrorCode.E_GRAPH_FAILED
+                    err_msg = f"Pipeline error: {exc}"
                 await send_error(websocket, VocoError(
-                    code=ErrorCode.E_GRAPH_FAILED,
-                    message=f"Pipeline error: {exc}",
-                    recoverable=True,
+                    code=err_code,
+                    message=err_msg,
+                    recoverable=err_code != ErrorCode.E_AUTH_EXPIRED,
                     session_id=thread_id,
                 ))
                 try:
@@ -1240,10 +1275,20 @@ async def voco_stream(websocket: WebSocket) -> None:
                 await _on_turn_end(text_override=text)
             except Exception as exc:
                 logger.error("[Pipeline] Text input pipeline error: %s", exc, exc_info=True)
+                exc_msg = str(exc)
+                if exc_msg.startswith("E_MODEL_OVERLOADED:"):
+                    err_code = ErrorCode.E_MODEL_OVERLOADED
+                    err_msg = exc_msg.split(":", 1)[1].strip()
+                elif exc_msg.startswith("E_AUTH_EXPIRED:"):
+                    err_code = ErrorCode.E_AUTH_EXPIRED
+                    err_msg = exc_msg.split(":", 1)[1].strip()
+                else:
+                    err_code = ErrorCode.E_GRAPH_FAILED
+                    err_msg = f"Pipeline error: {exc}"
                 await send_error(websocket, VocoError(
-                    code=ErrorCode.E_GRAPH_FAILED,
-                    message=f"Pipeline error: {exc}",
-                    recoverable=True,
+                    code=err_code,
+                    message=err_msg,
+                    recoverable=err_code != ErrorCode.E_AUTH_EXPIRED,
                     session_id=thread_id,
                 ))
                 try:
@@ -1259,7 +1304,7 @@ async def voco_stream(websocket: WebSocket) -> None:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return {}
+                raise asyncio.TimeoutError(f"Timed out waiting for {expected_type}")
             raw = await asyncio.wait_for(websocket.receive_text(), timeout=remaining)
             payload = json.loads(raw)
             msg_type = payload.get("type", "")

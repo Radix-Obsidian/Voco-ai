@@ -444,11 +444,11 @@ export function useVocoSocket() {
         type: "proposal_decision",
         decisions,
       }));
+      setProposals([]);
     } else {
-      toast({ title: "Connection lost", description: "Could not submit decisions — reconnecting...", variant: "destructive" });
-      console.error("[VocoSocket] Proposal decisions not sent — WebSocket closed");
+      toast({ title: "Connection lost", description: "Reconnecting — your proposals are preserved. Please resubmit after reconnection.", variant: "destructive" });
+      console.error("[VocoSocket] Proposal decisions not sent — WebSocket closed, keeping proposals in state");
     }
-    setProposals([]);
   }, []);
 
   const sendAuthSync = useCallback((token: string, uid: string, refreshToken?: string) => {
@@ -478,11 +478,11 @@ export function useVocoSocket() {
         type: "command_decision",
         decisions,
       }));
+      setCommandProposals([]);
     } else {
-      toast({ title: "Connection lost", description: "Could not submit decisions — reconnecting...", variant: "destructive" });
-      console.error("[VocoSocket] Command decisions not sent — WebSocket closed");
+      toast({ title: "Connection lost", description: "Reconnecting — your commands are preserved. Please resubmit after reconnection.", variant: "destructive" });
+      console.error("[VocoSocket] Command decisions not sent — WebSocket closed, keeping commands in state");
     }
-    setCommandProposals([]);
   }, []);
 
   const connect = useCallback(() => {

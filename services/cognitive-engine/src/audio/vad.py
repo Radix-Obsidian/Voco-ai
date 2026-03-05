@@ -103,7 +103,11 @@ class _OnnxVADModel:
 
 
 def _download_onnx_model() -> Path:
-    """Download the Silero VAD ONNX model if not cached locally."""
+    """Download the Silero VAD ONNX model if not cached locally.
+
+    Retries up to 3 times with a 30-second timeout per attempt so first-launch
+    doesn't hang indefinitely if the CDN is slow.
+    """
     if _ONNX_MODEL_PATH.exists():
         logger.debug("[VAD] ONNX model cached at %s", _ONNX_MODEL_PATH)
         return _ONNX_MODEL_PATH
@@ -111,11 +115,34 @@ def _download_onnx_model() -> Path:
     logger.info("[VAD] Downloading Silero VAD ONNX model (~2MB)...")
     _ONNX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+    import socket
     import urllib.request
-    urllib.request.urlretrieve(_ONNX_MODEL_URL, _ONNX_MODEL_PATH)
 
-    logger.info("[VAD] ONNX model saved to %s", _ONNX_MODEL_PATH)
-    return _ONNX_MODEL_PATH
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            # Set a 30s socket timeout so the download doesn't hang indefinitely
+            old_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(30)
+            try:
+                urllib.request.urlretrieve(_ONNX_MODEL_URL, _ONNX_MODEL_PATH)
+            finally:
+                socket.setdefaulttimeout(old_timeout)
+            logger.info("[VAD] ONNX model saved to %s", _ONNX_MODEL_PATH)
+            return _ONNX_MODEL_PATH
+        except Exception as exc:
+            logger.warning("[VAD] Download attempt %d/%d failed: %s", attempt, max_retries, exc)
+            # Clean up partial download
+            if _ONNX_MODEL_PATH.exists():
+                _ONNX_MODEL_PATH.unlink()
+            if attempt == max_retries:
+                raise RuntimeError(
+                    f"Failed to download Silero VAD model after {max_retries} attempts. "
+                    f"Check your internet connection. Last error: {exc}"
+                ) from exc
+
+    # Unreachable, but satisfies type checker
+    raise RuntimeError("VAD model download failed")
 
 
 def load_silero_model() -> _OnnxVADModel:

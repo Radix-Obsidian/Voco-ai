@@ -342,9 +342,28 @@ async def orchestrator_node(state: VocoState) -> dict:
         else:
             sanitized.append(m)
 
-    response: AIMessage = await model.ainvoke(
-        [SystemMessage(content=system_prompt), *sanitized]
-    )
+    try:
+        response: AIMessage = await model.ainvoke(
+            [SystemMessage(content=system_prompt), *sanitized]
+        )
+    except Exception as llm_exc:
+        exc_str = str(llm_exc).lower()
+        # Detect rate limit / overloaded errors from Anthropic or LiteLLM
+        if any(k in exc_str for k in ("529", "overloaded", "rate limit", "429", "too many requests")):
+            raise RuntimeError(
+                "E_MODEL_OVERLOADED: Claude is temporarily overloaded. Please wait a moment and try again."
+            ) from llm_exc
+        if any(k in exc_str for k in ("401", "403", "unauthorized", "forbidden", "invalid api key", "authentication")):
+            raise RuntimeError(
+                "E_AUTH_EXPIRED: API authentication failed. Check your API key configuration."
+            ) from llm_exc
+        if any(k in exc_str for k in ("timeout", "timed out", "connect", "network")):
+            raise RuntimeError(
+                f"E_GRAPH_FAILED: Network error reaching the AI model: {llm_exc}"
+            ) from llm_exc
+        raise RuntimeError(
+            f"E_GRAPH_FAILED: AI model error: {llm_exc}"
+        ) from llm_exc
 
     logger.info(
         "[Orchestrator 🧠] Claude response (tool_calls=%d): %.120s",

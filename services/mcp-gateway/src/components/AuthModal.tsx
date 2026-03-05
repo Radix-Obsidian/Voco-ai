@@ -46,7 +46,11 @@ const AuthModal = ({ open, onOpenChange, defaultTab = "signin" }: AuthModalProps
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-black/80 backdrop-blur-2xl border border-white/10 sm:max-w-md">
+      <DialogContent
+        className="bg-black/80 backdrop-blur-2xl border border-white/10 sm:max-w-md"
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle className="text-foreground text-xl">Welcome to Voco</DialogTitle>
           <DialogDescription className="text-muted-foreground">

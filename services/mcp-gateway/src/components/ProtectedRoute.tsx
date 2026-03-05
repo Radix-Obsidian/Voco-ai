@@ -1,10 +1,8 @@
-import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import AuthModal from "./AuthModal";
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { session, loading } = useAuth();
-  const [authOpen, setAuthOpen] = useState(true);
 
   if (loading) {
     return (
@@ -15,7 +13,8 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   }
 
   if (!session) {
-    return <AuthModal open={authOpen} onOpenChange={setAuthOpen} defaultTab="signin" />;
+    // Always force open — prevent dismiss via Escape or click-outside
+    return <AuthModal open={true} onOpenChange={() => {}} defaultTab="signin" />;
   }
 
   return <>{children}</>;
