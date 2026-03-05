@@ -326,8 +326,13 @@ pub fn start_services(app: AppHandle, state: Arc<BackendState>) {
         s.setup_message = None;
     }
 
-    // --- Spawn LiteLLM proxy ---
-    let litellm_result = spawn_litellm(&engine_dir, uv_path.as_deref());
+    // --- Spawn LiteLLM proxy (only if explicitly configured) ---
+    let litellm_result = if std::env::var("LITELLM_GATEWAY_URL").unwrap_or_default().is_empty() {
+        eprintln!("[Backend] LITELLM_GATEWAY_URL not set — skipping LiteLLM proxy (direct Anthropic mode).");
+        Err("LiteLLM proxy not needed in direct mode".into())
+    } else {
+        spawn_litellm(&engine_dir, uv_path.as_deref())
+    };
     match litellm_result {
         Ok(child) => {
             *state.litellm_process.lock().unwrap() = Some(child);

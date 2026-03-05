@@ -12,7 +12,7 @@ Routes registered on the main FastAPI app by `attach_ide_mcp_routes()`:
 Available tools:
   voco_search_web        — Tavily web search
   voco_read_github_issue — Read a GitHub issue
-  voco_ask               — Full LangGraph reasoning (requires LiteLLM gateway)
+  voco_ask               — Full LangGraph reasoning (requires ANTHROPIC_API_KEY or LiteLLM gateway)
 """
 
 from __future__ import annotations
@@ -152,12 +152,13 @@ async def _call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     if name == "voco_ask":
         gateway_url = os.environ.get("LITELLM_GATEWAY_URL", "")
         session_token = os.environ.get("LITELLM_SESSION_TOKEN", "")
-        if not gateway_url or not session_token:
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not anthropic_key and (not gateway_url or not session_token):
             return [TextContent(
                 type="text",
                 text=(
-                    "Error: LiteLLM gateway not configured. "
-                    "Set LITELLM_GATEWAY_URL and LITELLM_SESSION_TOKEN in the cognitive-engine .env file."
+                    "Error: No AI model configured. "
+                    "Set ANTHROPIC_API_KEY or LITELLM_GATEWAY_URL + LITELLM_SESSION_TOKEN."
                 ),
             )]
         try:
