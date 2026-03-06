@@ -6,6 +6,7 @@ import type {
   CommandProposal,
   BackgroundJob,
   ClaudeCodeDelegation,
+  ChatMessage,
 } from "@/hooks/use-voco-socket";
 import {
   SCENE1_LEDGER_STAGES,
@@ -54,7 +55,6 @@ const WS_URL = import.meta.env.VITE_COGNITIVE_ENGINE_WS
 
 export function useDemoMode() {
   const [isConnected, setIsConnected] = useState(false);
-  const [bargeInActive] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
   const [ledgerState, setLedgerState] = useState<LedgerState | null>(null);
   const [proposals, setProposals] = useState<Proposal[]>([]);
@@ -64,6 +64,7 @@ export function useDemoMode() {
   const [sandboxUrl, setSandboxUrl] = useState<string | null>(null);
   const [sandboxRefreshKey] = useState(0);
   const [claudeCodeDelegation] = useState<ClaudeCodeDelegation | null>(null);
+  const [messages] = useState<ChatMessage[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
   const phaseRef = useRef<DemoPhase>("idle");
@@ -77,14 +78,6 @@ export function useDemoMode() {
 
   const schedule = useCallback((fn: () => void, ms: number) => {
     timers.current.push(setTimeout(fn, ms));
-  }, []);
-
-  // ── Send audio to the real backend ──
-  const sendAudioChunk = useCallback((bytes: Uint8Array) => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(bytes.buffer);
-    }
   }, []);
 
   // ── Scene injectors ──
@@ -268,8 +261,6 @@ export function useDemoMode() {
 
   return {
     isConnected,
-    bargeInActive,
-    sendAudioChunk,
     connect,
     disconnect,
     terminalOutput,
@@ -286,10 +277,13 @@ export function useDemoMode() {
     sandboxRefreshKey,
     setSandboxUrl,
     sendAuthSync,
-    liveTranscript,
-    interimTranscript: "",
-    dictationMode: "voco" as const,
-    setDictationMode: () => {},
     claudeCodeDelegation,
+    // V2.5 chat state
+    messages,
+    sendMessage: () => {},
+    isThinking: false,
+    requestTTS: () => {},
+    stopTTS: () => {},
+    isTTSPlaying: false,
   };
 }

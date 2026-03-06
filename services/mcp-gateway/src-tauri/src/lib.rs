@@ -49,9 +49,6 @@ pub fn run() {
                                 w.show().ok();
                                 w.set_focus().ok();
                             }
-                            if let Some(orb) = app.get_webview_window("orb") {
-                                orb.hide().ok();
-                            }
                         }
                         "quit" => app.exit(0),
                         _ => {}
@@ -59,7 +56,7 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // --- Intercept main window close: hide instead of destroy ---
+            // --- Intercept main window close: hide to system tray instead of destroy ---
             let handle2 = app.handle().clone();
             if let Some(main_window) = app.get_webview_window("main") {
                 main_window.on_window_event(move |event| {
@@ -68,23 +65,8 @@ pub fn run() {
                         if let Some(w) = handle2.get_webview_window("main") {
                             w.hide().ok();
                         }
-                        if let Some(orb) = handle2.get_webview_window("orb") {
-                            orb.show().ok();
-                        }
                     }
                 });
-            }
-
-            // --- Position orb at bottom-center of primary monitor, then show ---
-            if let Some(orb) = app.get_webview_window("orb") {
-                if let Ok(Some(monitor)) = orb.primary_monitor() {
-                    let size = monitor.size();
-                    let scale = monitor.scale_factor();
-                    let x = (size.width as f64 / scale / 2.0) - 24.0;
-                    let y = (size.height as f64 / scale) - 72.0;
-                    orb.set_position(tauri::LogicalPosition::new(x, y)).ok();
-                }
-                orb.show().ok();
             }
 
             // --- Register default global hotkey (Alt+Space) ---

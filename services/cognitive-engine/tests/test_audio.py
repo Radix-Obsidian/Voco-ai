@@ -1,7 +1,7 @@
-"""Unit tests for STT and TTS audio clients.
+"""Unit tests for TTS audio client.
 
-Validates that Deepgram and Cartesia API integrations parse responses
-correctly according to their official documentation.
+Validates that Cartesia API integration parses responses
+correctly according to official documentation.
 
 Run:
     cd services/cognitive-engine
@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.audio.stt import DeepgramSTT
 from src.audio.tts import CartesiaTTS
 
 
@@ -34,108 +33,6 @@ class _AsyncIter:
         item = self._items[self._index]
         self._index += 1
         return item
-
-
-# ---------------------------------------------------------------------------
-# DeepgramSTT tests
-# ---------------------------------------------------------------------------
-
-
-class TestDeepgramSTTTranscribeOnce:
-    """Test the pre-recorded (REST) endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_successful_transcription(self):
-        """Verify correct parsing of Deepgram pre-recorded response."""
-        stt = DeepgramSTT(api_key="test-key")
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "results": {
-                "channels": [
-                    {
-                        "alternatives": [
-                            {"transcript": "Hello world", "confidence": 0.99}
-                        ]
-                    }
-                ]
-            }
-        }
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            result = await stt.transcribe_once(b"\x00" * 1600)
-
-        assert result == "Hello world"
-
-    @pytest.mark.asyncio
-    async def test_empty_response(self):
-        """Verify graceful handling of empty/malformed Deepgram response."""
-        stt = DeepgramSTT(api_key="test-key")
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"results": {"channels": []}}
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            result = await stt.transcribe_once(b"\x00" * 1600)
-
-        assert result == ""
-
-    @pytest.mark.asyncio
-    async def test_uses_correct_url_params(self):
-        """Verify the request URL contains correct encoding and model params."""
-        stt = DeepgramSTT(api_key="test-key", sample_rate=16000)
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "results": {"channels": [{"alternatives": [{"transcript": "ok"}]}]}
-        }
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            await stt.transcribe_once(b"\x00" * 1600)
-
-        call_args = mock_client.post.call_args
-        url = call_args[0][0] if call_args[0] else call_args[1].get("url", "")
-        assert "encoding=linear16" in url
-        assert "sample_rate=16000" in url
-        assert "model=nova-2" in url
-        assert "smart_format=true" in url
-
-    @pytest.mark.asyncio
-    async def test_auth_header(self):
-        """Verify the Authorization header uses Token format."""
-        stt = DeepgramSTT(api_key="my-secret-key")
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "results": {"channels": [{"alternatives": [{"transcript": "ok"}]}]}
-        }
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            await stt.transcribe_once(b"\x00" * 1600)
-
-        call_args = mock_client.post.call_args
-        headers = call_args[1].get("headers", {})
-        assert headers["Authorization"] == "Token my-secret-key"
 
 
 # ---------------------------------------------------------------------------

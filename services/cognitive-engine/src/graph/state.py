@@ -14,7 +14,6 @@ class VocoState(TypedDict):
     ------
     messages : conversation history managed by LangGraph's add_messages reducer.
     project_map : detected stack, file tree, and other project metadata.
-    barge_in_detected : set True by VAD when the user interrupts during playback.
     pending_mcp_action : JSON-RPC payload awaiting execution via Tauri MCP bridge.
     terminal_output : What the user sees in the Ghost Terminal.
     search_results : Data for Claude to analyze.
@@ -23,7 +22,6 @@ class VocoState(TypedDict):
 
     messages: Annotated[list[BaseMessage], add_messages]
     project_map: NotRequired[dict]
-    barge_in_detected: NotRequired[bool]
     pending_mcp_action: NotRequired[Optional[dict]]
     terminal_output: NotRequired[str]
     search_results: NotRequired[list[str]]

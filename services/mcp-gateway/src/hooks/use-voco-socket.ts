@@ -63,14 +63,14 @@ export interface CommandProposal {
   status: "pending" | "approved" | "rejected";
 }
 
-/** A long-running tool dispatched to the background queue (Milestone 11). */
+/** A long-running tool dispatched to the background queue. */
 export interface BackgroundJob {
   job_id: string;
   tool_name: string;
   status: "running" | "completed" | "failed";
 }
 
-/** Claude Code delegation progress (secret menu tool). */
+/** Claude Code delegation progress. */
 export interface ClaudeCodeDelegation {
   job_id: string;
   task_description: string;
@@ -78,10 +78,16 @@ export interface ClaudeCodeDelegation {
   messages: string[];
 }
 
+/** A single message in the chat thread. */
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  timestamp: number;
+}
+
 export function useVocoSocket() {
   const [isConnected, setIsConnected] = useState(false);
-  const [bargeInActive, setBargeInActive] = useState(false);
-  const ttsActiveRef = useRef(false);
   const [terminalOutput, setTerminalOutput] = useState<TerminalOutput | null>(null);
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
   const [proposals, setProposals] = useState<Proposal[]>([]);
@@ -91,46 +97,23 @@ export function useVocoSocket() {
   const [claudeCodeDelegation, setClaudeCodeDelegation] = useState<ClaudeCodeDelegation | null>(null);
   const [sandboxUrl, setSandboxUrl] = useState<string | null>(null);
   const [sandboxRefreshKey, setSandboxRefreshKey] = useState(0);
-  const [liveTranscript, setLiveTranscript] = useState("");
-  const [interimTranscript, setInterimTranscript] = useState("");
-  const [dictationMode, _setDictationMode] = useState<"voco" | "app">("voco");
-  const dictationModeRef = useRef<"voco" | "app">("voco");
-  const setDictationMode = useCallback((val: "voco" | "app" | ((prev: "voco" | "app") => "voco" | "app")) => {
-    _setDictationMode((prev) => {
-      const next = typeof val === "function" ? val(prev) : val;
-      dictationModeRef.current = next;
-      return next;
-    });
-  }, []);
-  const prevInterimRef = useRef("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [lastError, setLastError] = useState<{ code: string; message: string; recoverable: boolean } | null>(null);
-  // Voice Bridge: MCP client (e.g. Claude Code) requesting mic activation
-  const [voiceInputRequested, setVoiceInputRequested] = useState(false);
-  const [voiceInputPrompt, setVoiceInputPrompt] = useState("");
-  // True when voice bridge TTS is actively playing (for barge-in UI)
-  const [bridgeTtsActive, setBridgeTtsActive] = useState(false);
-  // Client-side turn counting for metering validation (GAP #12)
   const [turnCount, setTurnCount] = useState(0);
+  const [isTTSPlaying, setIsTTSPlaying] = useState(false);
+  // Chat messages — the core UI state for V2.5
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isThinking, setIsThinking] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRequests = useRef<Map<string, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>>(new Map());
 
-  // Reconnect state (GAP #11)
+  // Reconnect state
   const [isReconnecting, setIsReconnecting] = useState(false);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intentionalCloseRef = useRef(false);
   const MAX_RECONNECT_ATTEMPTS = 10;
   const BASE_RECONNECT_DELAY_MS = 1000;
-
-  const sendAudioChunk = useCallback((bytes: Uint8Array) => {
-    // Suppress mic input while TTS is playing to prevent echo/feedback loop
-    if (ttsActiveRef.current) return;
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(bytes.buffer);
-    }
-  }, []);
 
   const disconnect = useCallback(() => {
     intentionalCloseRef.current = true;
@@ -185,45 +168,19 @@ export function useVocoSocket() {
 
   const handleLocalSearch = useCallback(async (msg: { id: string; params: { pattern: string; project_path: string; max_count?: number; file_glob?: string; context_lines?: number } }) => {
     const { id, params } = msg;
-
-    setTerminalOutput({
-      command: `$ rg --pattern "${params.pattern}" ${params.project_path}`,
-      output: "",
-      isLoading: true,
-      scope: "local"
-    });
-
+    setTerminalOutput({ command: `$ rg --pattern "${params.pattern}" ${params.project_path}`, output: "", isLoading: true, scope: "local" });
     try {
-      const invokeArgs: Record<string, unknown> = {
-        pattern: params.pattern,
-        projectPath: params.project_path,
-      };
+      const invokeArgs: Record<string, unknown> = { pattern: params.pattern, projectPath: params.project_path };
       if (params.max_count) invokeArgs.maxCount = params.max_count;
       if (params.file_glob) invokeArgs.fileGlob = params.file_glob;
       if (params.context_lines) invokeArgs.contextLines = params.context_lines;
-
       const result = await tauriInvoke<string>("search_project", invokeArgs);
-
-      setTerminalOutput({
-        command: `$ rg --pattern "${params.pattern}" ${params.project_path}`,
-        output: result || "No matches found",
-        isLoading: false,
-        scope: "local"
-      });
-
+      setTerminalOutput({ command: `$ rg --pattern "${params.pattern}" ${params.project_path}`, output: result || "No matches found", isLoading: false, scope: "local" });
       setSearchResults({ id, scope: "local", localResults: result });
       sendJsonRpcResponse(id, result);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-
-      setTerminalOutput({
-        command: `$ rg --pattern "${params.pattern}" ${params.project_path}`,
-        output: "",
-        isLoading: false,
-        scope: "local",
-        error: errorMsg
-      });
-
+      setTerminalOutput({ command: `$ rg --pattern "${params.pattern}" ${params.project_path}`, output: "", isLoading: false, scope: "local", error: errorMsg });
       sendJsonRpcError(id, -32000, errorMsg);
     }
   }, [sendJsonRpcResponse, sendJsonRpcError]);
@@ -231,157 +188,59 @@ export function useVocoSocket() {
   const handleReadFile = useCallback(async (msg: { id: string; params: { file_path: string; project_root: string; start_line?: number; end_line?: number } }) => {
     const { id, params } = msg;
     const lineRange = params.start_line ? `:${params.start_line}${params.end_line ? `-${params.end_line}` : ""}` : "";
-
-    setTerminalOutput({
-      command: `$ read_file ${params.file_path}${lineRange}`,
-      output: "",
-      isLoading: true,
-      scope: "local"
-    });
-
+    setTerminalOutput({ command: `$ read_file ${params.file_path}${lineRange}`, output: "", isLoading: true, scope: "local" });
     try {
-      const invokeArgs: Record<string, unknown> = {
-        filePath: params.file_path,
-        projectRoot: params.project_root,
-      };
+      const invokeArgs: Record<string, unknown> = { filePath: params.file_path, projectRoot: params.project_root };
       if (params.start_line) invokeArgs.startLine = params.start_line;
       if (params.end_line) invokeArgs.endLine = params.end_line;
-
       const result = await tauriInvoke<string>("read_file", invokeArgs);
-
-      setTerminalOutput({
-        command: `$ read_file ${params.file_path}${lineRange}`,
-        output: result || "(empty file)",
-        isLoading: false,
-        scope: "local"
-      });
-
+      setTerminalOutput({ command: `$ read_file ${params.file_path}${lineRange}`, output: result || "(empty file)", isLoading: false, scope: "local" });
       sendJsonRpcResponse(id, result);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      setTerminalOutput({
-        command: `$ read_file ${params.file_path}${lineRange}`,
-        output: "",
-        isLoading: false,
-        scope: "local",
-        error: errorMsg
-      });
+      setTerminalOutput({ command: `$ read_file ${params.file_path}${lineRange}`, output: "", isLoading: false, scope: "local", error: errorMsg });
       sendJsonRpcError(id, -32000, errorMsg);
     }
   }, [sendJsonRpcResponse, sendJsonRpcError]);
 
   const handleListDirectory = useCallback(async (msg: { id: string; params: { dir_path: string; project_root: string; max_depth?: number } }) => {
     const { id, params } = msg;
-
-    setTerminalOutput({
-      command: `$ list_directory ${params.dir_path} --depth ${params.max_depth ?? 3}`,
-      output: "",
-      isLoading: true,
-      scope: "local"
-    });
-
+    setTerminalOutput({ command: `$ list_directory ${params.dir_path} --depth ${params.max_depth ?? 3}`, output: "", isLoading: true, scope: "local" });
     try {
-      const result = await tauriInvoke<string>("list_directory", {
-        dirPath: params.dir_path,
-        projectRoot: params.project_root,
-        maxDepth: params.max_depth ?? 3,
-      });
-
-      setTerminalOutput({
-        command: `$ list_directory ${params.dir_path} --depth ${params.max_depth ?? 3}`,
-        output: result || "(empty directory)",
-        isLoading: false,
-        scope: "local"
-      });
-
+      const result = await tauriInvoke<string>("list_directory", { dirPath: params.dir_path, projectRoot: params.project_root, maxDepth: params.max_depth ?? 3 });
+      setTerminalOutput({ command: `$ list_directory ${params.dir_path} --depth ${params.max_depth ?? 3}`, output: result || "(empty directory)", isLoading: false, scope: "local" });
       sendJsonRpcResponse(id, result);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      setTerminalOutput({
-        command: `$ list_directory ${params.dir_path}`,
-        output: "",
-        isLoading: false,
-        scope: "local",
-        error: errorMsg
-      });
+      setTerminalOutput({ command: `$ list_directory ${params.dir_path}`, output: "", isLoading: false, scope: "local", error: errorMsg });
       sendJsonRpcError(id, -32000, errorMsg);
     }
   }, [sendJsonRpcResponse, sendJsonRpcError]);
 
   const handleGlobFind = useCallback(async (msg: { id: string; params: { pattern: string; project_path: string; file_type?: string; max_results?: number } }) => {
     const { id, params } = msg;
-
-    setTerminalOutput({
-      command: `$ glob_find "${params.pattern}" ${params.project_path}`,
-      output: "",
-      isLoading: true,
-      scope: "local"
-    });
-
+    setTerminalOutput({ command: `$ glob_find "${params.pattern}" ${params.project_path}`, output: "", isLoading: true, scope: "local" });
     try {
-      const result = await tauriInvoke<string>("glob_find", {
-        pattern: params.pattern,
-        projectPath: params.project_path,
-        fileType: params.file_type ?? "file",
-        maxResults: params.max_results ?? 50,
-      });
-
-      setTerminalOutput({
-        command: `$ glob_find "${params.pattern}" ${params.project_path}`,
-        output: result || "No files found",
-        isLoading: false,
-        scope: "local"
-      });
-
+      const result = await tauriInvoke<string>("glob_find", { pattern: params.pattern, projectPath: params.project_path, fileType: params.file_type ?? "file", maxResults: params.max_results ?? 50 });
+      setTerminalOutput({ command: `$ glob_find "${params.pattern}" ${params.project_path}`, output: result || "No files found", isLoading: false, scope: "local" });
       sendJsonRpcResponse(id, result);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      setTerminalOutput({
-        command: `$ glob_find "${params.pattern}" ${params.project_path}`,
-        output: "",
-        isLoading: false,
-        scope: "local",
-        error: errorMsg
-      });
+      setTerminalOutput({ command: `$ glob_find "${params.pattern}" ${params.project_path}`, output: "", isLoading: false, scope: "local", error: errorMsg });
       sendJsonRpcError(id, -32000, errorMsg);
     }
   }, [sendJsonRpcResponse, sendJsonRpcError]);
 
   const handleExecuteCommand = useCallback(async (msg: { id: string; params: { command: string; project_path: string } }) => {
     const { id, params } = msg;
-
-    setTerminalOutput({
-      command: `$ ${params.command}`,
-      output: "",
-      isLoading: true,
-      scope: "local",
-    });
-
+    setTerminalOutput({ command: `$ ${params.command}`, output: "", isLoading: true, scope: "local" });
     try {
-      const result = await tauriInvoke<string>("execute_command", {
-        command: params.command,
-        projectPath: params.project_path,
-      });
-
-      setTerminalOutput({
-        command: `$ ${params.command}`,
-        output: result || "(no output)",
-        isLoading: false,
-        scope: "local",
-      });
-
+      const result = await tauriInvoke<string>("execute_command", { command: params.command, projectPath: params.project_path });
+      setTerminalOutput({ command: `$ ${params.command}`, output: result || "(no output)", isLoading: false, scope: "local" });
       sendJsonRpcResponse(id, result);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-
-      setTerminalOutput({
-        command: `$ ${params.command}`,
-        output: "",
-        isLoading: false,
-        scope: "local",
-        error: errorMsg,
-      });
-
+      setTerminalOutput({ command: `$ ${params.command}`, output: "", isLoading: false, scope: "local", error: errorMsg });
       sendJsonRpcError(id, -32000, errorMsg);
     }
   }, [sendJsonRpcResponse, sendJsonRpcError]);
@@ -389,11 +248,7 @@ export function useVocoSocket() {
   const handleWriteFile = useCallback(async (msg: { id: string; params: { file_path: string; content: string; project_root: string } }) => {
     const { id, params } = msg;
     try {
-      const result = await tauriInvoke<string>("write_file", {
-        filePath: params.file_path,
-        content: params.content,
-        projectRoot: params.project_root,
-      });
+      const result = await tauriInvoke<string>("write_file", { filePath: params.file_path, content: params.content, projectRoot: params.project_root });
       sendJsonRpcResponse(id, result);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -403,52 +258,21 @@ export function useVocoSocket() {
 
   const handleWebDiscovery = useCallback(async (msg: { id: string; params: { query: string } }) => {
     const { id, params } = msg;
-
-    setTerminalOutput({
-      command: `$ webmcp --query "${params.query}"`,
-      output: "",
-      isLoading: true,
-      scope: "web"
-    });
-
+    setTerminalOutput({ command: `$ webmcp --query "${params.query}"`, output: "", isLoading: true, scope: "web" });
     try {
       if (typeof navigator !== "undefined" && navigator.modelContext) {
-        const results = await navigator.modelContext.callTool({
-          name: "web_search",
-          input: { query: params.query }
-        });
-
-        setTerminalOutput({
-          command: `$ webmcp --query "${params.query}"`,
-          output: JSON.stringify(results, null, 2),
-          isLoading: false,
-          scope: "web"
-        });
-
+        const results = await navigator.modelContext.callTool({ name: "web_search", input: { query: params.query } });
+        setTerminalOutput({ command: `$ webmcp --query "${params.query}"`, output: JSON.stringify(results, null, 2), isLoading: false, scope: "web" });
         setSearchResults({ id, scope: "web", webResults: JSON.stringify(results) });
         sendJsonRpcResponse(id, results);
       } else {
         const errorMsg = "WebMCP not available in this context";
-        setTerminalOutput({
-          command: `$ webmcp --query "${params.query}"`,
-          output: "",
-          isLoading: false,
-          scope: "web",
-          error: errorMsg
-        });
+        setTerminalOutput({ command: `$ webmcp --query "${params.query}"`, output: "", isLoading: false, scope: "web", error: errorMsg });
         sendJsonRpcError(id, -32001, errorMsg);
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-
-      setTerminalOutput({
-        command: `$ webmcp --query "${params.query}"`,
-        output: "",
-        isLoading: false,
-        scope: "web",
-        error: errorMsg
-      });
-
+      setTerminalOutput({ command: `$ webmcp --query "${params.query}"`, output: "", isLoading: false, scope: "web", error: errorMsg });
       sendJsonRpcError(id, -32000, errorMsg);
     }
   }, [sendJsonRpcResponse, sendJsonRpcError]);
@@ -456,14 +280,10 @@ export function useVocoSocket() {
   const submitProposalDecisions = useCallback((decisions: Array<{ proposal_id: string; status: "approved" | "rejected" }>) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: "proposal_decision",
-        decisions,
-      }));
+      ws.send(JSON.stringify({ type: "proposal_decision", decisions }));
       setProposals([]);
     } else {
       toast({ title: "Connection lost", description: "Reconnecting — your proposals are preserved. Please resubmit after reconnection.", variant: "destructive" });
-      console.error("[VocoSocket] Proposal decisions not sent — WebSocket closed, keeping proposals in state");
     }
   }, []);
 
@@ -471,45 +291,60 @@ export function useVocoSocket() {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "auth_sync", token, uid, refresh_token: refreshToken || "" }));
-      console.log(`[VocoSocket] auth_sync sent for uid=${uid} token_len=${token.length} at ${new Date().toISOString()}`);
-    } else {
-      console.warn(`[VocoSocket] auth_sync skipped — ws not open (readyState=${ws?.readyState})`);
+      console.log(`[VocoSocket] auth_sync sent for uid=${uid}`);
     }
   }, []);
-
-  const bargeInBridge = useCallback(() => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "bridge_barge_in" }));
-      haltNativeAudio();
-      setBridgeTtsActive(false);
-      console.log("[VocoSocket] Bridge barge-in sent");
-    }
-  }, [haltNativeAudio]);
 
   const cancelBackgroundJob = useCallback((jobId: string) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "cancel_job", job_id: jobId }));
     }
-    // Immediately remove from UI
     setBackgroundJobs((prev) => prev.filter((j) => j.job_id !== jobId));
-    console.log(`[VocoSocket] Cancel requested for job ${jobId}`);
   }, []);
 
   const submitCommandDecisions = useCallback((decisions: Array<{ command_id: string; status: "approved" | "rejected" }>) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: "command_decision",
-        decisions,
-      }));
+      ws.send(JSON.stringify({ type: "command_decision", decisions }));
       setCommandProposals([]);
     } else {
       toast({ title: "Connection lost", description: "Reconnecting — your commands are preserved. Please resubmit after reconnection.", variant: "destructive" });
-      console.error("[VocoSocket] Command decisions not sent — WebSocket closed, keeping commands in state");
     }
   }, []);
+
+  /** Send a text message to the AI. Adds it to chat immediately. */
+  const sendMessage = useCallback((text: string) => {
+    const ws = wsRef.current;
+    if (!text.trim() || !ws || ws.readyState !== WebSocket.OPEN) return;
+    // Add user message to chat
+    const userMsg: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      text: text.trim(),
+      timestamp: Date.now(),
+    };
+    setMessages((prev) => [...prev, userMsg]);
+    setIsThinking(true);
+    ws.send(JSON.stringify({ type: "text_input", text: text.trim() }));
+  }, []);
+
+  /** Request TTS playback of text (on-demand "Read aloud"). */
+  const requestTTS = useCallback((text: string) => {
+    const ws = wsRef.current;
+    if (!text.trim() || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: "tts_request", text: text.trim() }));
+  }, []);
+
+  /** Stop TTS playback. */
+  const stopTTS = useCallback(() => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "tts_stop" }));
+    }
+    haltNativeAudio();
+    setIsTTSPlaying(false);
+  }, [haltNativeAudio]);
 
   const connect = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -524,12 +359,7 @@ export function useVocoSocket() {
       setIsReconnecting(false);
       reconnectAttemptRef.current = 0;
       intentionalCloseRef.current = false;
-      console.log(`[VocoSocket] Connected to ${WS_URL} at ${new Date().toISOString()}`);
-    };
-
-    const slog = (level: "log" | "warn" | "error", ...args: unknown[]) => {
-      const prefix = sessionId ? `[${sessionId}]` : "[no-session]";
-      console[level](prefix, ...args);
+      console.log(`[VocoSocket] Connected to ${WS_URL}`);
     };
 
     ws.onmessage = async (event) => {
@@ -544,46 +374,32 @@ export function useVocoSocket() {
         const msg = JSON.parse(event.data);
 
         if (msg.type === "heartbeat") {
-          // No-op — server heartbeat to keep WebSocket alive during long operations
+          // No-op
         } else if (msg.type === "session_init") {
           setSessionId(msg.session_id ?? null);
-          console.log(`[VocoSocket] Session initialized: ${msg.session_id}`);
         } else if (msg.type === "error") {
           const errPayload = { code: msg.code ?? "UNKNOWN", message: msg.message ?? "Unknown error", recoverable: msg.recoverable ?? true };
           setLastError(errPayload);
+          setIsThinking(false);
           toast({ title: errPayload.code, description: errPayload.message, variant: "destructive" });
-          console.error(`[VocoSocket] Error: ${errPayload.code} — ${errPayload.message}`);
-        } else if (msg.type === "interim_transcript") {
-          const text = msg.text ?? "";
-          setInterimTranscript(text);
-          // App dictation mode: type into focused OS field via enigo
-          if (dictationModeRef.current === "app" && text && isTauri()) {
-            // Debounce: only invoke if text actually changed
-            const prev = prevInterimRef.current;
-            if (text !== prev) {
-              tauriInvoke("type_diff", { previous: prev, current: text }).catch((err) => {
-                console.warn("[Dictation] type_diff failed:", err);
-              });
-              prevInterimRef.current = text;
-            }
-          }
+        } else if (msg.type === "ai_response") {
+          // AI response text — add to chat thread
+          const aiMsg: ChatMessage = {
+            id: `ai-${Date.now()}`,
+            role: "assistant",
+            text: msg.text ?? "",
+            timestamp: Date.now(),
+          };
+          setMessages((prev) => [...prev, aiMsg]);
+          setIsThinking(false);
         } else if (msg.type === "transcript") {
-          setLiveTranscript(msg.text ?? "");
-          setInterimTranscript("");
-          prevInterimRef.current = "";
-          // Clear voice bridge request when transcript arrives
-          setVoiceInputRequested(false);
-          setVoiceInputPrompt("");
+          // Server echoing back the transcript — can be used for confirmation
+          console.log("[VocoSocket] Transcript confirmed:", msg.text);
         } else if (msg.type === "control") {
           if (msg.action === "halt_audio_playback") {
             haltNativeAudio();
-            setBargeInActive(true);
-            setBridgeTtsActive(false);
-            console.log("[Barge-in] Halting native audio!");
+            setIsTTSPlaying(false);
           } else if (msg.action === "turn_ended") {
-            setBargeInActive(false);
-            setLiveTranscript("");
-            // GAP #12: Client-side turn counting — sync with server count
             const serverCount = typeof msg.turn_count === "number" ? msg.turn_count : undefined;
             setTurnCount((prev) => {
               const next = prev + 1;
@@ -593,34 +409,16 @@ export function useVocoSocket() {
               return serverCount ?? next;
             });
           } else if (msg.action === "tts_start") {
-            ttsActiveRef.current = true;
-            console.log("[TTS] Active — mic suppressed to prevent echo");
-          } else if (msg.action === "tts_start_bargeable") {
-            // Voice bridge TTS — keep mic hot so VAD can detect barge-in
-            // Do NOT set ttsActiveRef so sendAudioChunk keeps flowing
-            console.log("[TTS] Active (bargeable) — mic stays hot for voice barge-in");
-          } else if (msg.action === "bridge_tts_active") {
-            setBridgeTtsActive(true);
-            console.log("[TTS] Bridge TTS active — speak or click orb to interrupt");
+            setIsTTSPlaying(true);
           } else if (msg.action === "tts_end") {
-            setBridgeTtsActive(false);
-            // Suppress mic immediately so speaker tail-end audio isn't captured
-            ttsActiveRef.current = true;
-            // Resume mic after speaker fully drains (prevents echo feedback)
-            setTimeout(() => {
-              ttsActiveRef.current = false;
-              console.log("[TTS] Ended — mic resumed");
-            }, 2000);
+            setIsTTSPlaying(false);
           }
         } else if (msg.type === "background_job_start") {
-          // A new async tool was dispatched to the background queue.
           setBackgroundJobs((prev) => [
             ...prev,
             { job_id: msg.job_id, tool_name: msg.tool_name, status: "running" },
           ]);
-          console.log(`[VocoSocket] Background job started: ${msg.job_id} (${msg.tool_name})`);
         } else if (msg.type === "background_job_complete") {
-          // Mark the job done and auto-remove after 4 s so the UI stays clean.
           setBackgroundJobs((prev) =>
             prev.map((j) =>
               j.job_id === msg.job_id ? { ...j, status: "completed" } : j
@@ -630,11 +428,9 @@ export function useVocoSocket() {
           setTimeout(() => {
             setBackgroundJobs((prev) => prev.filter((j) => j.job_id !== msg.job_id));
           }, 4000);
-          console.log(`[VocoSocket] Background job complete: ${msg.job_id}`);
         } else if (msg.type === "ledger_update") {
           setLedgerState(msg.payload);
         } else if (msg.type === "ledger_clear") {
-          // Clear the transient pipeline state but preserve active background jobs.
           setLedgerState(null);
         } else if (msg.type === "command_proposal") {
           setCommandProposals((prev) => [
@@ -662,31 +458,19 @@ export function useVocoSocket() {
             },
           ]);
         } else if (msg.type === "user_info") {
-          // Backend sends tier + founder status after auth_sync lookup (service key)
           const tier = msg.tier ?? "free";
           localStorage.setItem("voco-tier", tier);
           window.dispatchEvent(new StorageEvent("storage", { key: "voco-tier", newValue: tier }));
-          console.log(`[VocoSocket] user_info: tier=${tier} founder=${msg.is_founder}`);
         } else if (msg.type === "screen_capture_request") {
-          // Phase 3: Voco Eyes — capture recent screen frames and send back
           const requestId: string = msg.id ?? "";
           try {
             const frames = await tauriInvoke<string[]>("get_recent_frames");
-            ws.send(JSON.stringify({
-              type: "screen_frames",
-              id: requestId,
-              frames,
-              media_type: "image/jpeg",
-            }));
-            console.log(`[VocoEyes] Sent ${frames.length} frame(s) to Python.`);
+            ws.send(JSON.stringify({ type: "screen_frames", id: requestId, frames, media_type: "image/jpeg" }));
           } catch (err) {
-            // Send an empty frames array so Python can respond gracefully
             ws.send(JSON.stringify({ type: "screen_frames", id: requestId, frames: [], media_type: "image/jpeg" }));
             console.warn("[VocoEyes] get_recent_frames failed:", err);
           }
         } else if (msg.type === "cowork_edit") {
-          // Co-work integration: IDE-native file edit display
-          console.log(`[CoWork] Edit proposal for ${msg.file_path}`);
           setProposals((prev) => [
             ...prev,
             {
@@ -707,7 +491,6 @@ export function useVocoSocket() {
             status: "running",
             messages: [],
           });
-          console.log(`[ClaudeCode] Delegation started: ${msg.job_id}`);
         } else if (msg.type === "claude_code_progress") {
           setClaudeCodeDelegation((prev) => {
             if (!prev || prev.job_id !== msg.job_id) return prev;
@@ -723,50 +506,24 @@ export function useVocoSocket() {
             title: msg.success ? "Claude Code finished" : "Claude Code failed",
             description: (msg.summary as string)?.slice(0, 120) ?? "",
           });
-          // Auto-clear after 10s
           const completedJobId = msg.job_id;
           setTimeout(() => {
-            setClaudeCodeDelegation((prev) =>
-              prev?.job_id === completedJobId ? null : prev
-            );
+            setClaudeCodeDelegation((prev) => prev?.job_id === completedJobId ? null : prev);
           }, 10000);
-          console.log(`[ClaudeCode] Delegation complete: ${msg.job_id} success=${msg.success}`);
         } else if (msg.type === "sandbox_live") {
-          // Phase 5: Live Sandbox — first generation
           setSandboxUrl(msg.url as string);
           setSandboxRefreshKey((prev) => prev + 1);
-          console.log("[Sandbox] Live at", msg.url);
         } else if (msg.type === "sandbox_updated") {
-          // Phase 5: Live Sandbox — iterative update (URL stays the same)
           setSandboxRefreshKey((prev) => prev + 1);
-          console.log("[Sandbox] Preview refreshed.");
-        } else if (msg.type === "voice_input_request") {
-          // Voice Bridge: MCP client wants mic activation for voice input
-          const prompt = (msg.prompt as string) || "Listening for voice input...";
-          setVoiceInputRequested(true);
-          setVoiceInputPrompt(prompt);
-          toast({ title: "Claude Code is listening...", description: prompt });
-          console.log("[VoiceBridge] Voice input requested:", prompt);
         } else if (msg.type === "scan_security_request") {
-          // Phase 4: Voco Auto-Sec — run local security scan via Rust and send findings back
           const requestId: string = msg.id ?? "";
           const projectPath: string = msg.project_path ?? "";
           try {
             const raw = await tauriInvoke<string>("scan_security", { projectPath });
             const findings = JSON.parse(raw);
-            ws.send(JSON.stringify({
-              type: "scan_security_result",
-              id: requestId,
-              findings,
-            }));
-            console.log("[AutoSec] Security scan complete, findings sent to Python.");
+            ws.send(JSON.stringify({ type: "scan_security_result", id: requestId, findings }));
           } catch (err) {
-            ws.send(JSON.stringify({
-              type: "scan_security_result",
-              id: requestId,
-              findings: { error: String(err) },
-            }));
-            console.warn("[AutoSec] scan_security failed:", err);
+            ws.send(JSON.stringify({ type: "scan_security_result", id: requestId, findings: { error: String(err) } }));
           }
         } else if (msg.jsonrpc === "2.0" && msg.method) {
           if (msg.method === "local/search_project") {
@@ -796,7 +553,6 @@ export function useVocoSocket() {
           }
         }
       } catch (err) {
-        // Non-JSON frame or parse error — ignore
         console.warn("[VocoSocket] Message parse error:", err);
       }
     };
@@ -804,9 +560,9 @@ export function useVocoSocket() {
     ws.onclose = (ev) => {
       setIsConnected(false);
       setLedgerState(null);
-      console.log(`[VocoSocket] Disconnected at ${new Date().toISOString()} — code=${ev.code} reason="${ev.reason}" wasClean=${ev.wasClean}`);
+      setIsThinking(false);
 
-      // Auto-reconnect with exponential backoff (GAP #11)
+      // Auto-reconnect with exponential backoff
       if (!intentionalCloseRef.current && reconnectAttemptRef.current < MAX_RECONNECT_ATTEMPTS) {
         const attempt = reconnectAttemptRef.current;
         const delay = Math.min(BASE_RECONNECT_DELAY_MS * Math.pow(2, attempt), 30000);
@@ -814,21 +570,18 @@ export function useVocoSocket() {
         const totalDelay = Math.round(delay + jitter);
         reconnectAttemptRef.current = attempt + 1;
         setIsReconnecting(true);
-        console.log(`[VocoSocket] Reconnecting in ${totalDelay}ms (attempt ${attempt + 1}/${MAX_RECONNECT_ATTEMPTS})`);
         reconnectTimerRef.current = setTimeout(() => {
           reconnectTimerRef.current = null;
           connect();
         }, totalDelay);
       } else if (reconnectAttemptRef.current >= MAX_RECONNECT_ATTEMPTS) {
         setIsReconnecting(false);
-        console.error("[VocoSocket] Max reconnect attempts reached. Manual reconnect required.");
         toast({ title: "Connection Lost", description: "Could not reconnect to Voco engine. Click Connect to retry.", variant: "destructive" });
       }
     };
 
-    ws.onerror = (ev) => {
+    ws.onerror = () => {
       setIsConnected(false);
-      console.error(`[VocoSocket] Error at ${new Date().toISOString()}:`, ev);
     };
 
     wsRef.current = ws;
@@ -846,8 +599,6 @@ export function useVocoSocket() {
 
   return {
     isConnected,
-    bargeInActive,
-    sendAudioChunk,
     connect,
     disconnect,
     terminalOutput,
@@ -866,18 +617,18 @@ export function useVocoSocket() {
     sandboxUrl,
     sandboxRefreshKey,
     setSandboxUrl,
-    liveTranscript,
-    interimTranscript,
-    dictationMode,
-    setDictationMode,
     sessionId,
     lastError,
     isReconnecting,
     turnCount,
     claudeCodeDelegation,
-    voiceInputRequested,
-    voiceInputPrompt,
-    bridgeTtsActive,
-    bargeInBridge,
+    // V2.5 chat state
+    messages,
+    sendMessage,
+    isThinking,
+    // V2.5 optional TTS
+    requestTTS,
+    stopTTS,
+    isTTSPlaying,
   };
 }

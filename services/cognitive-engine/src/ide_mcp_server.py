@@ -222,43 +222,20 @@ async def _call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             logger.error("[IDE MCP] voco_ask error: %s", exc, exc_info=True)
             return [TextContent(type="text", text=f"Error: {exc}")]
 
-    # ---- voco_voice_input ----
+    # ---- voco_voice_input (deprecated — voice input removed in V2.5) ----
     if name == "voco_voice_input":
-        try:
-            from src.voice_bridge import voice_bridge
+        return [TextContent(
+            type="text",
+            text="Voice input is not available in this version. Please use text input instead.",
+        )]
 
-            prompt = arguments.get("prompt", "")
-            timeout = float(arguments.get("timeout", 30))
-            transcript = await voice_bridge.request_voice_input(
-                prompt=prompt, timeout=timeout
-            )
-            return [TextContent(type="text", text=transcript)]
-        except asyncio.TimeoutError:
-            return [TextContent(
-                type="text",
-                text="No speech detected within the timeout period. Try again.",
-            )]
-        except RuntimeError as exc:
-            return [TextContent(type="text", text=f"Voice input error: {exc}")]
-        except Exception as exc:
-            logger.warning("[IDE MCP] voco_voice_input error: %s", exc)
-            return [TextContent(type="text", text=f"Voice input error: {exc}")]
-
-    # ---- voco_speak ----
+    # ---- voco_speak (deprecated — use TTS playback via desktop app) ----
     if name == "voco_speak":
-        try:
-            from src.voice_bridge import voice_bridge
-
-            text = arguments.get("text", "")
-            if not text:
-                return [TextContent(type="text", text="Error: 'text' is required.")]
-            await voice_bridge.speak(text)
-            return [TextContent(type="text", text="Spoken successfully.")]
-        except RuntimeError as exc:
-            return [TextContent(type="text", text=f"Speak error: {exc}")]
-        except Exception as exc:
-            logger.warning("[IDE MCP] voco_speak error: %s", exc)
-            return [TextContent(type="text", text=f"Speak error: {exc}")]
+        return [TextContent(
+            type="text",
+            text="Voice output is now handled via the desktop app's 'Read aloud' feature. "
+                 "This MCP tool is no longer available.",
+        )]
 
     return [TextContent(type="text", text=f"Unknown tool: '{name}'")]
 

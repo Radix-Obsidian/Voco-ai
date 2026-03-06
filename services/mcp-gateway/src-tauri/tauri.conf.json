@@ -23,19 +23,6 @@
         "resizable": true,
         "fullscreen": false,
         "decorations": true
-      },
-      {
-        "label": "orb",
-        "title": "",
-        "url": "/orb.html",
-        "width": 48,
-        "height": 48,
-        "resizable": false,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "visible": false
       }
     ],
     "security": {

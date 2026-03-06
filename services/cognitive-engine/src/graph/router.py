@@ -11,9 +11,7 @@ from .state import VocoState
 
 
 def _route_after_orchestrator(state: VocoState) -> str:
-    """Route based on barge-in flag, proposals, and whether Claude requested a tool call."""
-    if state.get("barge_in_detected"):
-        return "orchestrator_node"
+    """Route based on proposals and whether Claude requested a tool call."""
     if state.get("pending_proposals"):
         return "proposal_review_node"
     if state.get("pending_commands"):
@@ -41,7 +39,6 @@ builder.add_conditional_edges(
     "orchestrator_node",
     _route_after_orchestrator,
     {
-        "orchestrator_node": "orchestrator_node",
         "mcp_gateway_node": "mcp_gateway_node",
         "proposal_review_node": "proposal_review_node",
         "command_review_node": "command_review_node",

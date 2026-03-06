@@ -1,13 +1,13 @@
-"""FastAPI app — health check + WebSocket audio-streaming bridge.
+"""FastAPI app — health check + WebSocket text-streaming bridge.
 
-Data flow (Milestone 5 vertical slice):
-  1. Tauri streams raw PCM-16 bytes → VAD detects speech/silence.
-  2. On turn-end: audio buffer → Deepgram STT → transcript string.
-  3. Transcript → LangGraph (Claude 3.5 Sonnet with tools).
-  4. If Claude calls search_codebase → JSON-RPC 2.0 dispatched to Tauri.
-  5. Tauri executes ripgrep, sends result back as "mcp_result" message.
-  6. Result injected into graph as ToolMessage → Claude synthesises answer.
-  7. Answer text → Cartesia TTS → PCM-16 audio streamed back to Tauri.
+Data flow (V2.5 — text-first):
+  1. User types message in chat UI → sent as JSON over WebSocket.
+  2. Text → LangGraph (Claude Sonnet / Haiku with tools).
+  3. If Claude calls a tool → JSON-RPC 2.0 dispatched to Tauri.
+  4. Tauri executes (ripgrep, file ops, etc.), sends result back as "mcp_result".
+  5. Result injected into graph as ToolMessage → Claude synthesises answer.
+  6. Answer text streamed back to frontend as chat message.
+  7. Optional: user clicks "Read aloud" → Cartesia TTS → audio streamed to Tauri.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 
 from src.auth.routes import router as auth_router
@@ -37,9 +37,7 @@ from src.graph.background_worker import BackgroundJobQueue
 from src.ide_mcp_server import attach_ide_mcp_routes
 
 from src.debug import debug_logger
-from src.audio.stt import DeepgramSTT, DeepgramStreamingSession, WhisperLocalSession
 from src.audio.tts import CartesiaTTS
-from src.audio.vad import VocoVADStreamer, load_silero_model
 from src.graph.router import compile_graph
 from src.graph.checkpointer import get_checkpointer, prune_checkpoints
 from src.graph.tools import mcp_registry
@@ -47,16 +45,12 @@ from src.graph.nodes import set_session_token
 from src.telemetry import init_telemetry, get_tracer, current_trace_id
 from src.errors import ErrorCode, VocoError, send_error
 from src.constants import (
-    AUDIO_MIN_BUFFER_SIZE,
-    SILENCE_FRAMES_FOR_TURN_END,
     WEBSOCKET_RECEIVE_TIMEOUT,
     WEBSOCKET_MESSAGE_TIMEOUT,
     WEBSOCKET_SCAN_TIMEOUT,
     HITL_PROPOSAL_TIMEOUT,
     HITL_COMMAND_TIMEOUT,
-    RPC_BACKGROUND_TIMEOUT,
     RPC_FUTURE_MAX_AGE,
-    TTS_GRACE_PERIOD,
     TTS_TAIL_DELAY,
     ALLOWED_ENV_KEYS,
     CLAUDE_CODE_TIMEOUT,
@@ -104,7 +98,6 @@ def _verify_supabase_jwt(token: str, expected_uid: str) -> bool:
 
 
 # In-memory store for the current Live Sandbox HTML (single-user desktop app).
-# Populated by the generate_and_preview_mvp / update_sandbox_preview tool handlers.
 _sandbox_html: dict[str, str] = {"current": ""}
 
 _SANDBOX_EMPTY_PAGE = """<!DOCTYPE html>
@@ -135,8 +128,6 @@ def _load_native_config() -> None:
     import sys
     from pathlib import Path
 
-    # Assign to a plain `str` so Pyright doesn't narrow to a platform literal
-    # and flag the non-Windows branches as unreachable.
     platform: str = sys.platform
     if platform == "win32":
         base = os.environ.get("APPDATA", "")
@@ -216,7 +207,6 @@ async def _run_claude_code(
                 msg_text = ""
 
                 if evt_type == "assistant" and "message" in evt:
-                    # Extract text blocks from assistant message
                     content = evt["message"].get("content", [])
                     for block in content:
                         if isinstance(block, dict) and block.get("type") == "text":
@@ -227,7 +217,6 @@ async def _run_claude_code(
                 elif evt_type == "tool_result":
                     msg_text = "Tool completed"
                 elif evt_type == "result":
-                    # Final result
                     result_text = evt.get("result", "")
                     if isinstance(result_text, str):
                         msg_text = result_text[:200]
@@ -265,7 +254,6 @@ async def _run_claude_code(
         logger.exception("[ClaudeCode] Unexpected error")
         return {"success": False, "summary": f"Error: {exc}", "exit_code": -1}
 
-    # Truncate collected output to avoid context bloat
     full_output = "\n".join(collected_output)
     if len(full_output) > 4000:
         full_output = full_output[:4000] + "\n... (truncated)"
@@ -288,8 +276,8 @@ async def _init_mcp_registry() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Load the Silero VAD model and connect external MCP servers at startup."""
-    _load_native_config()  # pre-populate os.environ from Tauri's config.json
+    """Connect external MCP servers at startup."""
+    _load_native_config()
 
     # Observability: OpenTelemetry + FastAPI auto-instrumentation
     init_telemetry()
@@ -300,10 +288,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as otel_exc:
         logger.warning("[Telemetry] FastAPI instrumentation skipped: %s", otel_exc)
 
-    logger.info("Loading Silero VAD model…")
-    app.state.silero_model = load_silero_model()
-    logger.info("Silero VAD model ready.")
-
     logger.info("Initialising Universal MCP Registry (background)…")
     asyncio.create_task(_init_mcp_registry())
 
@@ -312,7 +296,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await mcp_registry.shutdown()
 
 
-app = FastAPI(title="Voco Cognitive Engine", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Voco Cognitive Engine", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -356,7 +340,7 @@ async def sandbox_preview() -> HTMLResponse:
 
 @app.websocket("/ws/voco-stream")
 async def voco_stream(websocket: WebSocket) -> None:
-    # A2: Validate token before accepting connection
+    # Validate token before accepting connection
     token = websocket.query_params.get("token", "")
     expected = os.environ.get("VOCO_WS_TOKEN", "")
     if expected and token != expected:
@@ -368,82 +352,23 @@ async def voco_stream(websocket: WebSocket) -> None:
     except Exception as accept_exc:
         logger.error("[WS] Failed to accept WebSocket: %s", accept_exc)
         return
-    vad = VocoVADStreamer(
-        websocket.app.state.silero_model,
-        silence_frames_for_turn_end=SILENCE_FRAMES_FOR_TURN_END,
-    )
 
-    stt = DeepgramSTT()   # reads DEEPGRAM_API_KEY from os.environ at call time
     tts = CartesiaTTS()   # reads CARTESIA_API_KEY from os.environ at call time
-
-    # Register with the voice bridge so MCP clients (Claude Code) can use mic/TTS
-    from src.voice_bridge import voice_bridge
-    voice_bridge.register_ws(websocket, stt=stt, tts=tts)
-
-    audio_buffer: bytearray = bytearray()
-    streaming_stt: DeepgramStreamingSession | None = None
-    _interim_relay_task: asyncio.Task | None = None
-    _speech_active = False  # True once VAD detects speech onset
-
-    async def _relay_interims() -> None:
-        """Background task: read interim transcripts from Deepgram, send to frontend."""
-        nonlocal streaming_stt
-        try:
-            while streaming_stt and not streaming_stt._closed:
-                text = await streaming_stt.interim_queue.get()
-                if text is None:
-                    break
-                await websocket.send_json({"type": "interim_transcript", "text": text})
-        except Exception as exc:
-            logger.debug("[StreamSTT] Interim relay stopped: %s", exc)
-
-    async def _start_streaming_stt() -> None:
-        """Start a new streaming STT session for real-time interim transcripts.
-
-        Picks provider based on STT_PROVIDER env var:
-        - "deepgram" (default): Cloud streaming via Deepgram Nova-2
-        - "whisper-local": Fully offline via faster-whisper (CTranslate2)
-        """
-        nonlocal streaming_stt, _interim_relay_task
-        provider = os.environ.get("STT_PROVIDER", "deepgram").lower()
-
-        try:
-            if provider == "whisper-local":
-                model_size = os.environ.get("WHISPER_MODEL", "base.en")
-                streaming_stt = WhisperLocalSession(model_size=model_size)
-                await streaming_stt.start()
-                logger.info("[StreamSTT] Using local Whisper (%s)", model_size)
-            else:
-                if not os.environ.get("DEEPGRAM_API_KEY", ""):
-                    return
-                streaming_stt = DeepgramStreamingSession()
-                await streaming_stt.start()
-                logger.info("[StreamSTT] Using Deepgram cloud")
-            _interim_relay_task = asyncio.create_task(_relay_interims())
-        except Exception as exc:
-            logger.warning("[StreamSTT] Failed to start: %s", exc)
-            streaming_stt = None
 
     thread_id = _new_thread_id()
     config = {"configurable": {"thread_id": thread_id}}
     logger.info("[Session] New thread: %s", thread_id)
     debug_logger.log_ws_event("connect", thread_id, {"url": str(websocket.url)})
 
-    # Per-session SQLite checkpointer — persists graph state across restarts (GAP #2).
+    # Per-session SQLite checkpointer
     _session_checkpointer = await get_checkpointer(thread_id)
     graph = compile_graph(checkpointer=_session_checkpointer)
-    tts_active = False  # Track if TTS is currently playing
 
-    # Wake word gate — only process speech that starts with "voco" / "hey voco" etc.
-    # Toggled via settings; defaults to ON so ambient speech is ignored.
-    _WAKE_WORDS = ("hey voco", "a voco", "voco", "hey boco", "boco", "hey poco", "poco")
-    _wake_word_required = True  # Can be toggled via update_env / settings
-
-    # Observability: send session_id to frontend so logs can be correlated
+    # Observability: send session_id to frontend
     tracer = get_tracer()
     await websocket.send_json({"type": "session_init", "session_id": thread_id})
 
-    # Per-session auth state (populated by auth_sync from frontend)
+    # Per-session auth state
     _auth_uid = "local"
     _auth_token = ""
     _stripe_customer_id = ""
@@ -456,15 +381,12 @@ async def voco_stream(websocket: WebSocket) -> None:
         "architect@viperbyproof.com",
     }
 
-    # Milestone 11: Instant ACK + Background Queue
-    # Each pending Tauri RPC call gets an asyncio.Future keyed on the call_id.
-    # The main receive loop resolves these futures when mcp_result arrives,
-    # waking up the background task that's waiting on them.
+    # Background job queue for async tool execution
     background_queue = BackgroundJobQueue()
     _pending_rpc_futures: dict[str, asyncio.Future] = {}
     _rpc_futures_timestamps: dict[str, float] = {}
 
-    # Session-level metrics for observability (Issue #6)
+    # Session-level metrics
     _session_metrics = {"timeout_count": 0, "rpc_count": 0, "turn_count": 0}
 
     async def _cleanup_stale_futures(max_age_seconds: float = RPC_FUTURE_MAX_AGE) -> None:
@@ -480,24 +402,6 @@ async def voco_stream(websocket: WebSocket) -> None:
         if stale:
             logger.debug("[RPC] Cleaned up %d stale futures", len(stale))
 
-    async def _on_barge_in() -> None:
-        """Signal Tauri to halt TTS playback immediately (barge-in).
-
-        Also starts streaming STT session on speech onset for real-time transcripts.
-        """
-        nonlocal tts_active, _speech_active
-        if voice_bridge._tts_playing:
-            voice_bridge.trigger_barge_in()
-            await websocket.send_json({"type": "control", "action": "halt_audio_playback"})
-            logger.info("[Barge-in] Voice bridge TTS interrupted by user speech")
-        elif tts_active:
-            await websocket.send_json({"type": "control", "action": "halt_audio_playback"})
-
-        # Start streaming STT on speech onset (first barge-in/speech detection)
-        if not _speech_active and not streaming_stt:
-            _speech_active = True
-            await _start_streaming_stt()
-
     _last_detected_domain = "general"
 
     async def _send_ledger_update(
@@ -510,7 +414,6 @@ async def voco_stream(websocket: WebSocket) -> None:
         nonlocal _last_detected_domain
         _last_detected_domain = domain
 
-        # Map domain to appropriate icon types
         domain_icon = {
             "database": "Database",
             "ui": "FileCode2",
@@ -539,121 +442,26 @@ async def voco_stream(websocket: WebSocket) -> None:
 
     _turn_in_progress = False
 
-    async def _on_turn_end(text_override: str | None = None) -> None:
-        """Full pipeline: STT → LangGraph → (optional JSON-RPC) → TTS.
+    async def _handle_message(text: str) -> None:
+        """Full pipeline: Text → LangGraph → (optional JSON-RPC) → response text.
 
-        When ``text_override`` is provided the STT step is skipped entirely —
-        the text arrives directly from the "Type instead" input box and is fed
-        straight into LangGraph.  Billing still fires at the end so typed turns
-        are metered identically to spoken turns.
+        Replaces the old voice pipeline. No STT or automatic TTS.
         """
-        nonlocal audio_buffer, tts_active, _turn_in_progress, streaming_stt, _speech_active
+        nonlocal _turn_in_progress
 
         if _turn_in_progress:
             logger.warning("[Pipeline] Turn already in progress — ignoring duplicate trigger.")
             return
         _turn_in_progress = True
-        _speech_active = False  # Reset for next turn
 
         _session_metrics["turn_count"] += 1
         await websocket.send_json({"type": "control", "action": "turn_ended", "turn_count": _session_metrics["turn_count"]})
 
-        if text_override is not None:
-            # --- Text input path: skip STT ---
-            transcript = text_override
-            logger.info("[Pipeline] Text input: %.120s", transcript)
-            await websocket.send_json({"type": "transcript", "text": transcript})
-            # Clean up streaming session if any
-            if streaming_stt:
-                await streaming_stt.stop()
-                streaming_stt = None
-            await websocket.send_json({"type": "interim_transcript", "text": ""})
-        else:
-            # --- Voice path: transcribe via streaming STT or fallback ---
-            if not audio_buffer:
-                logger.warning("[Pipeline] Turn ended with empty audio buffer — skipping.")
-                if streaming_stt:
-                    await streaming_stt.stop()
-                    streaming_stt = None
-                return
+        transcript = text
+        logger.info("[Pipeline] Text input: %.120s", transcript)
+        await websocket.send_json({"type": "transcript", "text": transcript})
 
-            # Require a minimum buffer size to avoid transcribing noise/clicks
-            if len(audio_buffer) < AUDIO_MIN_BUFFER_SIZE:
-                logger.info("[Pipeline] Audio buffer too small (%d bytes) — likely noise, skipping.", len(audio_buffer))
-                audio_buffer = bytearray()
-                if streaming_stt:
-                    await streaming_stt.stop()
-                    streaming_stt = None
-                await websocket.send_json({"type": "interim_transcript", "text": ""})
-                return
-
-            try:
-                if streaming_stt:
-                    # Use streaming session's accumulated final transcript
-                    transcript = await streaming_stt.finish()
-                    streaming_stt = None
-                    # Clear interim display
-                    await websocket.send_json({"type": "interim_transcript", "text": ""})
-                else:
-                    # Fallback: batch transcription
-                    provider = os.environ.get("STT_PROVIDER", "deepgram").lower()
-                    if provider == "whisper-local":
-                        model_size = os.environ.get("WHISPER_MODEL", "base.en")
-                        local = WhisperLocalSession(model_size=model_size)
-                        await local.start()
-                        await local.feed(bytes(audio_buffer))
-                        transcript = await local.finish()
-                    else:
-                        transcript = await stt.transcribe_once(bytes(audio_buffer))
-            except (ValueError, Exception) as stt_err:
-                audio_buffer = bytearray()
-                if streaming_stt:
-                    await streaming_stt.stop()
-                    streaming_stt = None
-                await websocket.send_json({"type": "interim_transcript", "text": ""})
-                await send_error(websocket, VocoError(
-                    code=ErrorCode.E_STT_FAILED,
-                    message=str(stt_err),
-                    recoverable=False,
-                    session_id=thread_id,
-                ))
-                return
-            audio_buffer = bytearray()
-
-            if not transcript or len(transcript.strip()) < 2:
-                logger.info("[Pipeline] Empty/trivial transcript — user may have been silent.")
-                return
-
-            logger.info("[Pipeline] Transcript: %s", transcript)
-
-            # Wake word gate: ignore speech not directed at Voco (skip in bridge mode)
-            if not voice_bridge.in_bridge_mode and _wake_word_required:
-                transcript_lower = transcript.lower()
-                if not any(w in transcript_lower for w in _WAKE_WORDS):
-                    logger.info("[Pipeline] No wake word detected — ignoring ambient speech")
-                    _turn_in_progress = False
-                    return
-                # Strip the wake word prefix so Claude gets clean input
-                for w in _WAKE_WORDS:
-                    idx = transcript_lower.find(w)
-                    if idx != -1:
-                        transcript = transcript[idx + len(w):].strip(" ,.")
-                        break
-                if not transcript or len(transcript.strip()) < 2:
-                    logger.info("[Pipeline] Wake word only, no command — ignoring")
-                    _turn_in_progress = False
-                    return
-
-            await websocket.send_json({"type": "transcript", "text": transcript})
-
-            # Bridge mode: route transcript to MCP client instead of LangGraph
-            if voice_bridge.in_bridge_mode:
-                logger.info("[Pipeline] Bridge mode — routing transcript to MCP client")
-                voice_bridge.resolve_transcript(transcript)
-                _turn_in_progress = False
-                return
-
-        # --- Step 2: Run LangGraph (Claude 3.5 Sonnet) ---
+        # --- Step 2: Run LangGraph (Claude Sonnet / Haiku) ---
         await _send_ledger_update(domain="general", context_router="active", orchestrator="pending", tools="pending")
 
         try:
@@ -695,7 +503,6 @@ async def voco_stream(websocket: WebSocket) -> None:
             project_path = result.get("active_project_path") or os.environ.get("VOCO_PROJECT_PATH", "")
             logger.info("[Pipeline] Interrupt: %d proposals pending review", len(proposals))
 
-            # Send each proposal to frontend for HITL review
             for p in proposals:
                 await websocket.send_json({
                     "type": "proposal",
@@ -707,7 +514,6 @@ async def voco_stream(websocket: WebSocket) -> None:
                     "description": p.get("description", ""),
                     "project_root": project_path,
                 })
-                # Co-work: send an additional cowork_edit message for IDE-native display
                 if p.get("cowork_ready"):
                     await websocket.send_json({
                         "type": "cowork_edit",
@@ -721,29 +527,12 @@ async def voco_stream(websocket: WebSocket) -> None:
                     })
                     logger.info("[CoWork] IDE-native edit sent for %s", p.get("file_path", ""))
 
-            # TTS: announce proposals (non-fatal — HITL must proceed even if TTS fails)
+            # Send text summary to chat (no TTS announcement)
             desc_list = [p.get("description", p.get("file_path", "")) for p in proposals]
-            summary_text = f"I have {len(proposals)} proposal{'s' if len(proposals) != 1 else ''} for your review. {'. '.join(desc_list)}. Say approve or reject."
-            try:
-                await websocket.send_json({"type": "control", "action": "tts_start", "text": summary_text, "tts_active": True})
-                tts_active = True
-                vad.suppress(True)
-                async for audio_chunk in tts.synthesize_stream(summary_text):
-                    await websocket.send_bytes(audio_chunk)
-            except Exception as tts_exc:
-                logger.warning("[Pipeline] TTS failed during proposal announcement: %s", tts_exc)
-            finally:
-                try:
-                    await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
-                except Exception:
-                    pass
-                await asyncio.sleep(TTS_GRACE_PERIOD)
-                tts_active = False
-                vad.suppress(False)
-                vad.reset()
-                audio_buffer = bytearray()
+            summary_text = f"I have {len(proposals)} proposal{'s' if len(proposals) != 1 else ''} for your review: {'. '.join(desc_list)}. Please approve or reject."
+            await websocket.send_json({"type": "ai_response", "text": summary_text})
 
-            # Wait for proposal_decision from frontend (filtered receive)
+            # Wait for proposal_decision from frontend
             decisions = []
             try:
                 decision_msg = await _receive_filtered("proposal_decision", timeout=HITL_PROPOSAL_TIMEOUT)
@@ -788,14 +577,13 @@ async def voco_stream(websocket: WebSocket) -> None:
                 config=config,
             )
 
-        # --- Step 2.6: Check for command sandbox interrupt ---
+        # --- Step 2.6: Check for command interrupt ---
         snapshot = await graph.aget_state(config)
         if snapshot.next and "command_review_node" in snapshot.next:
             commands = snapshot.values.get("pending_commands", [])
             project_path = result.get("active_project_path") or os.environ.get("VOCO_PROJECT_PATH", "")
             logger.info("[Pipeline] Command interrupt: %d commands pending approval", len(commands))
 
-            # Send each command proposal to frontend for HITL review
             for c in commands:
                 await websocket.send_json({
                     "type": "command_proposal",
@@ -805,29 +593,11 @@ async def voco_stream(websocket: WebSocket) -> None:
                     "project_path": c.get("project_path", project_path),
                 })
 
-            # TTS: announce commands (non-fatal — HITL must proceed even if TTS fails)
+            # Send text summary to chat (no TTS announcement)
             cmd_descs = [c.get("description", c.get("command", "")) for c in commands]
-            cmd_summary = f"I need to run {len(commands)} command{'s' if len(commands) != 1 else ''}. {'. '.join(cmd_descs)}. Approve or reject."
-            try:
-                await websocket.send_json({"type": "control", "action": "tts_start", "text": cmd_summary, "tts_active": True})
-                tts_active = True
-                vad.suppress(True)
-                async for audio_chunk in tts.synthesize_stream(cmd_summary):
-                    await websocket.send_bytes(audio_chunk)
-            except Exception as tts_exc:
-                logger.warning("[Pipeline] TTS failed during command announcement: %s", tts_exc)
-            finally:
-                try:
-                    await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
-                except Exception:
-                    pass
-                await asyncio.sleep(TTS_GRACE_PERIOD)
-                tts_active = False
-                vad.suppress(False)
-                vad.reset()
-                audio_buffer = bytearray()
+            cmd_summary = f"I need to run {len(commands)} command{'s' if len(commands) != 1 else ''}: {'. '.join(cmd_descs)}. Please approve or reject."
+            await websocket.send_json({"type": "ai_response", "text": cmd_summary})
 
-            # Wait for command_decision from frontend (filtered receive)
             cmd_decisions = []
             try:
                 decision_msg = await _receive_filtered("command_decision", timeout=HITL_COMMAND_TIMEOUT)
@@ -844,7 +614,6 @@ async def voco_stream(websocket: WebSocket) -> None:
                 if d.get("status") != "approved":
                     continue
                 cid = d["command_id"]
-                # Find the matching command
                 cmd_data = next((c for c in commands if c.get("command_id") == cid), None)
                 if not cmd_data:
                     continue
@@ -868,19 +637,13 @@ async def voco_stream(websocket: WebSocket) -> None:
                     d["output"] = f"execution error: {exc}"
                     logger.warning("[Pipeline] execute_command response error: %s", exc)
 
-            # Resume graph with command decisions (including output)
+            # Resume graph with command decisions
             result = await graph.ainvoke(
                 Command(resume=None, update={"command_decisions": cmd_decisions}),
                 config=config,
             )
 
-        # --- Step 3: Instant ACK + Background Dispatch (Milestone 11) ---
-        # The ACK ToolMessage instantly resolves Claude's tool_call, satisfying
-        # Anthropic's strict requirement that an AIMessage with tool_calls must be
-        # immediately followed by a ToolMessage.  The real Tauri RPC runs inside
-        # a background asyncio.Task so the AI is free to keep talking.  When the
-        # task finishes it injects a SystemMessage into the LangGraph checkpoint
-        # via graph.aupdate_state(); Claude sees the result on the user's next turn.
+        # --- Step 3: Handle pending MCP action (tool calls) ---
         pending_action = result.get("pending_mcp_action")
         if pending_action:
             tool_name = pending_action.get("name", "")
@@ -888,11 +651,7 @@ async def voco_stream(websocket: WebSocket) -> None:
             call_id = pending_action.get("id", f"rpc-{uuid.uuid4().hex[:8]}")
             _screen_handled = False
 
-            # ----------------------------------------------------------------
-            # Phase 3: Voco Eyes — inline screen analysis
-            # Screen capture is handled synchronously (not background) because
-            # Claude needs the images immediately to produce a useful response.
-            # ----------------------------------------------------------------
+            # --- Voco Eyes — inline screen analysis ---
             if tool_name == "analyze_screen":
                 await _send_ledger_update(
                     domain=detected_domain,
@@ -902,10 +661,8 @@ async def voco_stream(websocket: WebSocket) -> None:
                 )
                 logger.info("[VocoEyes] Requesting screen frames for call_id=%s", call_id)
 
-                # 1. Ask frontend to call get_recent_frames() via Tauri invoke
                 await websocket.send_json({"type": "screen_capture_request", "id": call_id})
 
-                # 2. Wait for the frontend to respond with the frames (10 s timeout)
                 frames: list[str] = []
                 media_type = "image/jpeg"
                 try:
@@ -919,10 +676,9 @@ async def voco_stream(websocket: WebSocket) -> None:
                 except Exception as exc:
                     logger.warning("[VocoEyes] Error receiving screen_frames: %s", exc)
 
-                # 3. Build multimodal ToolMessage — images + context text
                 user_desc = tool_args.get("user_description", "")
                 if frames:
-                    sampled = frames[-5:]  # max 5 frames (Anthropic image limit)
+                    sampled = frames[-5:]
                     vision_content: list = [
                         {
                             "type": "image_url",
@@ -948,16 +704,10 @@ async def voco_stream(websocket: WebSocket) -> None:
                     )
                     logger.warning("[VocoEyes] No frames in buffer.")
 
-                # 4. Re-invoke graph — Claude produces a visual analysis response
                 result = await graph.ainvoke({"messages": [screen_tool_msg]}, config=config)
                 _screen_handled = True
 
-            # ----------------------------------------------------------------
-            # Phase 4: Voco Auto-Sec — inline security scan
-            # Like screen analysis, this is synchronous: Rust scans the
-            # project instantly (no network calls) and Claude analyzes the
-            # JSON findings immediately.
-            # ----------------------------------------------------------------
+            # --- Voco Auto-Sec — inline security scan ---
             elif tool_name == "scan_vulnerabilities":
                 await _send_ledger_update(
                     domain=detected_domain,
@@ -968,14 +718,12 @@ async def voco_stream(websocket: WebSocket) -> None:
                 project_path_arg = tool_args.get("project_path", os.environ.get("VOCO_PROJECT_PATH", ""))
                 logger.info("[AutoSec] Requesting security scan for call_id=%s path=%s", call_id, project_path_arg)
 
-                # 1. Ask frontend to invoke scan_security via Tauri
                 await websocket.send_json({
                     "type": "scan_security_request",
                     "id": call_id,
                     "project_path": project_path_arg,
                 })
 
-                # 2. Await scan findings (30 s — project may have many env files)
                 findings_str = ""
                 try:
                     raw = await asyncio.wait_for(websocket.receive_text(), timeout=WEBSOCKET_SCAN_TIMEOUT)
@@ -991,28 +739,20 @@ async def voco_stream(websocket: WebSocket) -> None:
                     logger.warning("[AutoSec] Error receiving scan result: %s", exc)
                     findings_str = json.dumps({"error": str(exc)})
 
-                # 3. Build ToolMessage with findings for Claude to analyze
                 sec_tool_msg = ToolMessage(
                     content=(
                         "Security scan complete. Analyze these findings and provide a "
-                        "prioritized threat summary with actionable remediation steps. "
-                        "Be concise — your response will be spoken aloud.\n\n"
+                        "prioritized threat summary with actionable remediation steps.\n\n"
                         + findings_str
                     ),
                     tool_call_id=call_id,
                 )
                 logger.info("[AutoSec] Findings ready (%d chars), invoking Claude.", len(findings_str))
 
-                # 4. Re-invoke graph — Claude produces spoken security analysis
                 result = await graph.ainvoke({"messages": [sec_tool_msg]}, config=config)
                 _screen_handled = True
 
-            # ----------------------------------------------------------------
-            # Phase 5: Live Sandbox — generate_and_preview_mvp / update_sandbox_preview
-            # Claude provides the complete HTML as a tool argument; we store it
-            # in _sandbox_html and serve it via GET /sandbox. The frontend opens
-            # an iframe pointing at http://localhost:8001/sandbox.
-            # ----------------------------------------------------------------
+            # --- Live Sandbox — generate_and_preview_mvp / update_sandbox_preview ---
             elif tool_name in ("generate_and_preview_mvp", "update_sandbox_preview"):
                 await _send_ledger_update(
                     domain=detected_domain,
@@ -1048,13 +788,7 @@ async def voco_stream(websocket: WebSocket) -> None:
                 result = await graph.ainvoke({"messages": [sandbox_tool_msg]}, config=config)
                 _screen_handled = True
 
-            # ----------------------------------------------------------------
-            # Secret Menu: delegate_to_claude_code
-            # Uses Instant ACK + Background Task pattern so the WS handler
-            # returns immediately (prevents keepalive ping timeout).
-            # The subprocess result is injected into the checkpoint; Claude
-            # sees it on the user's next turn.
-            # ----------------------------------------------------------------
+            # --- delegate_to_claude_code ---
             elif tool_name == "delegate_to_claude_code":
                 cc_job_id = uuid.uuid4().hex[:8]
                 cc_task = tool_args.get("task_description", "")
@@ -1067,7 +801,6 @@ async def voco_stream(websocket: WebSocket) -> None:
                     "task_description": cc_task,
                 })
 
-                # Instant ACK — satisfies Claude's tool_call → tool_result contract
                 ack_tool_msg = ToolMessage(
                     content=(
                         "Claude Code delegation started in the background. "
@@ -1078,7 +811,6 @@ async def voco_stream(websocket: WebSocket) -> None:
                 )
                 result = await graph.ainvoke({"messages": [ack_tool_msg]}, config=config)
 
-                # Background task — runs the subprocess without blocking the WS handler
                 async def _cc_background(
                     _job_id: str, _task: str, _project: str,
                     _ws: WebSocket, _graph, _config: dict,
@@ -1099,7 +831,6 @@ async def voco_stream(websocket: WebSocket) -> None:
                     except Exception:
                         logger.warning("[ClaudeCode] Could not send completion to frontend")
 
-                    # Inject result into checkpoint so Claude sees it next turn
                     try:
                         result_msg = SystemMessage(
                             content=(
@@ -1121,17 +852,14 @@ async def voco_stream(websocket: WebSocket) -> None:
                 )
                 _screen_handled = True
 
-            # ----------------------------------------------------------------
-            # Synchronous Agentic Loop — like Claude Code
-            # Tool call → Tauri RPC → result → feed back to Claude → repeat
-            # ----------------------------------------------------------------
+            # --- Synchronous Agentic Loop — tool call → Tauri RPC → result → Claude → repeat ---
             if not _screen_handled:
                 _fallback_path = (
                     tool_args.get("project_path", "")
                     or result.get("active_project_path")
                     or os.environ.get("VOCO_PROJECT_PATH", "")
                 )
-                # Route each tool to its correct JSON-RPC method + params
+
                 def _build_rpc_params(name: str, args: dict, fallback: str) -> tuple[str, dict]:
                     if name == "read_file":
                         p: dict = {"file_path": args.get("file_path", ""), "project_root": args.get("project_path", fallback)}
@@ -1166,11 +894,9 @@ async def voco_stream(websocket: WebSocket) -> None:
                         p["context_lines"] = args["context_lines"]
                     return "local/search_project", p
 
-                # --- Synchronous tool loop (max 5 iterations to prevent infinite loops) ---
                 MAX_TOOL_LOOPS = 5
                 loop_count = 0
 
-                # Heartbeat keeps WebSocket alive during long tool executions
                 async def _heartbeat():
                     try:
                         while True:
@@ -1206,7 +932,6 @@ async def voco_stream(websocket: WebSocket) -> None:
                         tools="active",
                     )
 
-                    # Notify frontend of the running tool
                     job_id = uuid.uuid4().hex[:8]
                     await websocket.send_json({
                         "type": "background_job_start",
@@ -1214,7 +939,6 @@ async def voco_stream(websocket: WebSocket) -> None:
                         "tool_name": tool_name,
                     })
 
-                    # 1. Send RPC to Tauri and await the response synchronously.
                     rpc_future: asyncio.Future = asyncio.get_running_loop().create_future()
                     _pending_rpc_futures[call_id] = rpc_future
                     _rpc_futures_timestamps[call_id] = time.monotonic()
@@ -1245,7 +969,6 @@ async def voco_stream(websocket: WebSocket) -> None:
                         "[Pipeline] Tool %s returned %d chars.", tool_name, len(tool_result_str),
                     )
 
-                    # Mark job complete in frontend
                     try:
                         await websocket.send_json({
                             "type": "background_job_complete",
@@ -1255,22 +978,18 @@ async def voco_stream(websocket: WebSocket) -> None:
                     except Exception:
                         pass
 
-                    # 2. Feed the real result back to Claude as a proper ToolMessage.
                     tool_result_msg = ToolMessage(
-                        content=tool_result_str[:4000],  # Cap to avoid context bloat
+                        content=tool_result_str[:4000],
                         tool_call_id=call_id,
                     )
 
-                    # 3. Re-invoke the graph so Claude processes the result.
                     result = await graph.ainvoke(
                         {"messages": [tool_result_msg]},
                         config=config,
                     )
 
-                    # 4. Check if Claude wants to call another tool (agentic loop).
                     next_msg = result["messages"][-1]
                     if isinstance(next_msg, AIMessage) and next_msg.tool_calls:
-                        # Claude wants another tool — loop again
                         tc = next_msg.tool_calls[0]
                         tool_name = tc["name"]
                         tool_args = tc.get("args", {})
@@ -1283,7 +1002,6 @@ async def voco_stream(websocket: WebSocket) -> None:
                         logger.info("[Pipeline] Claude wants another tool: %s", tool_name)
                         continue
                     else:
-                        # Claude is done — break out, proceed to TTS
                         break
 
                 _heartbeat_task.cancel()
@@ -1292,7 +1010,7 @@ async def voco_stream(websocket: WebSocket) -> None:
                     "[Pipeline] Agentic loop done after %d iteration(s).", loop_count,
                 )
 
-        # --- Step 4: Extract final text and synthesise via Cartesia TTS ---
+        # --- Step 4: Send AI response as text to chat ---
         final_message = result["messages"][-1]
         response_text: str = (
             final_message.content
@@ -1301,44 +1019,14 @@ async def voco_stream(websocket: WebSocket) -> None:
         )
 
         if not response_text.strip():
-            logger.warning("[Pipeline] Empty response text — skipping TTS.")
+            logger.warning("[Pipeline] Empty response text — skipping.")
             await _send_ledger_clear()
             return
 
-        logger.info("[Pipeline] Speaking: %.120s…", response_text)
-        await websocket.send_json({"type": "control", "action": "tts_start", "text": response_text, "tts_active": True})
+        logger.info("[Pipeline] Response: %.120s…", response_text)
+        await websocket.send_json({"type": "ai_response", "text": response_text})
 
-        tts_active = True
-        vad.suppress(True)
-        try:
-            chunk_count = 0
-            async for audio_chunk in tts.synthesize_stream(response_text):
-                await websocket.send_bytes(audio_chunk)
-                chunk_count += 1
-            logger.info("[TTS] Sent %d audio chunks to frontend.", chunk_count)
-            if chunk_count == 0:
-                logger.warning("[TTS] Zero audio chunks after retries — check Cartesia key and voice ID.")
-                await send_error(websocket, VocoError(
-                    code=ErrorCode.E_TTS_FAILED,
-                    message="Voice synthesis returned no audio after retries — check your Cartesia API key in Settings.",
-                ))
-        except Exception as tts_exc:
-            logger.error("[TTS] Synthesis failed: %s", tts_exc)
-            await send_error(websocket, VocoError(
-                code=ErrorCode.E_TTS_FAILED,
-                message=f"Voice synthesis failed: {tts_exc}",
-            ))
-
-        await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
-
-        # Grace period BEFORE resuming mic — speakers may still be playing
-        await asyncio.sleep(TTS_GRACE_PERIOD)
-        tts_active = False
-        vad.suppress(False)
-        vad.reset()
-        audio_buffer = bytearray()
-
-        # --- Stripe Seat + Meter: report one voice turn (fire and forget) ---
+        # --- Stripe Seat + Meter: report one turn (fire and forget) ---
         if _is_founder:
             logger.debug("[Billing] Skipping meter for founder %s", _user_email)
         else:
@@ -1362,46 +1050,14 @@ async def voco_stream(websocket: WebSocket) -> None:
 
         await _send_ledger_clear()
 
-    async def _safe_turn_end() -> None:
-        """Wraps _on_turn_end with error handling so ledger always clears."""
-        nonlocal _turn_in_progress
-        with tracer.start_as_current_span("voco.session.turn", attributes={"session.id": thread_id}):
-            try:
-                await _on_turn_end()
-            except Exception as exc:
-                logger.error("[Pipeline] Turn-end pipeline error: %s", exc, exc_info=True)
-                # Parse structured error codes from orchestrator_node
-                exc_msg = str(exc)
-                if exc_msg.startswith("E_MODEL_OVERLOADED:"):
-                    err_code = ErrorCode.E_MODEL_OVERLOADED
-                    err_msg = exc_msg.split(":", 1)[1].strip()
-                elif exc_msg.startswith("E_AUTH_EXPIRED:"):
-                    err_code = ErrorCode.E_AUTH_EXPIRED
-                    err_msg = exc_msg.split(":", 1)[1].strip()
-                else:
-                    err_code = ErrorCode.E_GRAPH_FAILED
-                    err_msg = f"Pipeline error: {exc}"
-                await send_error(websocket, VocoError(
-                    code=err_code,
-                    message=err_msg,
-                    recoverable=err_code != ErrorCode.E_AUTH_EXPIRED,
-                    session_id=thread_id,
-                ))
-                try:
-                    await _send_ledger_clear()
-                except Exception:
-                    pass
-            finally:
-                _turn_in_progress = False
-
-    async def _safe_text_input(text: str) -> None:
-        """Run the full pipeline for a typed message, bypassing STT."""
+    async def _safe_handle_message(text: str) -> None:
+        """Wraps _handle_message with error handling so ledger always clears."""
         nonlocal _turn_in_progress
         with tracer.start_as_current_span("voco.session.turn", attributes={"session.id": thread_id, "input.type": "text"}):
             try:
-                await _on_turn_end(text_override=text)
+                await _handle_message(text)
             except Exception as exc:
-                logger.error("[Pipeline] Text input pipeline error: %s", exc, exc_info=True)
+                logger.error("[Pipeline] Message pipeline error: %s", exc, exc_info=True)
                 exc_msg = str(exc)
                 if exc_msg.startswith("E_MODEL_OVERLOADED:"):
                     err_code = ErrorCode.E_MODEL_OVERLOADED
@@ -1446,7 +1102,7 @@ async def voco_stream(websocket: WebSocket) -> None:
             elif msg_type == "text_input":
                 text = payload.get("text", "").strip()
                 if text:
-                    asyncio.create_task(_safe_text_input(text))
+                    asyncio.create_task(_safe_handle_message(text))
             elif msg_type == "auth_sync":
                 nonlocal _auth_token, _auth_uid, _stripe_customer_id, _user_email, _is_founder, _user_tier
                 _auth_token = payload.get("token", "")
@@ -1462,10 +1118,7 @@ async def voco_stream(websocket: WebSocket) -> None:
             else:
                 logger.debug("[WS] Draining unexpected message while waiting for %s: %s", expected_type, msg_type)
 
-    vad.on_barge_in = _on_barge_in
-    vad.on_turn_end = _safe_turn_end
-
-    # Periodic cleanup of stale RPC futures (Issue #6)
+    # Periodic cleanup of stale RPC futures
     async def _periodic_cleanup() -> None:
         while True:
             await asyncio.sleep(60)
@@ -1476,96 +1129,84 @@ async def voco_stream(websocket: WebSocket) -> None:
     try:
         while True:
             try:
-                # Wait for message with 30s timeout (allows pauses during barge-in)
                 message = await asyncio.wait_for(websocket.receive(), timeout=WEBSOCKET_RECEIVE_TIMEOUT)
             except asyncio.TimeoutError:
-                logger.debug("[Pipeline] WebSocket receive timeout (audio pause) — continuing")
+                logger.debug("[Pipeline] WebSocket receive timeout — continuing")
                 await _cleanup_stale_futures()
                 continue
             except RuntimeError:
-                # "Cannot call receive once a disconnect message has been received"
                 logger.info("Client disconnected (runtime)")
                 break
 
             if "bytes" in message:
-                chunk = message["bytes"]
-                # During voice bridge TTS: run VAD with stricter thresholds for barge-in
-                if voice_bridge._tts_playing:
-                    vad._bridge_barge_in_mode = True
-                    await vad.process_chunk(chunk)
-                    continue
-                # Transition from bridge TTS → normal: reset VAD + buffer to flush echo
-                if vad._bridge_barge_in_mode:
-                    vad._bridge_barge_in_mode = False
-                    vad.reset()
-                    audio_buffer = bytearray()
-                    logger.debug("[Pipeline] Bridge TTS ended — VAD reset, buffer cleared")
-                # Skip VAD processing while normal TTS is active (prevents echo feedback)
-                if tts_active:
-                    continue
-                audio_buffer.extend(chunk)
-                # Feed audio to streaming STT for real-time interim transcripts
-                if streaming_stt:
-                    await streaming_stt.feed(chunk)
-                elif not _speech_active and len(audio_buffer) > 1024:
-                    # Start streaming on first substantial audio (VAD hasn't fired barge_in yet)
-                    _speech_active = True
-                    await _start_streaming_stt()
-                    if streaming_stt:
-                        # Feed buffered audio so far
-                        await streaming_stt.feed(bytes(audio_buffer))
-                await vad.process_chunk(chunk)
+                # Binary messages are no longer expected (voice input removed).
+                # Silently ignore for backwards compatibility.
+                continue
             elif "text" in message:
                 try:
                     payload = json.loads(message["text"])
                     msg_type = payload.get("type", "")
 
-                    if msg_type == "bridge_barge_in":
-                        # User clicked orb to interrupt voice bridge TTS
-                        voice_bridge.trigger_barge_in()
-                        logger.info("[WS] Bridge barge-in from user (orb click)")
-                    elif msg_type == "text_input":
-                        # "Type instead" path — bypass STT, feed directly into LangGraph.
+                    if msg_type == "text_input":
                         text = payload.get("text", "").strip()
                         if text:
                             logger.info("[WS] Text input received: %.120s", text)
-                            asyncio.create_task(_safe_text_input(text))
+                            asyncio.create_task(_safe_handle_message(text))
+                    elif msg_type == "tts_request":
+                        # On-demand TTS playback — user clicked "Read aloud"
+                        tts_text = payload.get("text", "").strip()
+                        if tts_text:
+                            logger.info("[TTS] Read-aloud request: %.80s…", tts_text)
+                            try:
+                                await websocket.send_json({"type": "control", "action": "tts_start", "text": tts_text, "tts_active": True})
+                                chunk_count = 0
+                                async for audio_chunk in tts.synthesize_stream(tts_text):
+                                    await websocket.send_bytes(audio_chunk)
+                                    chunk_count += 1
+                                logger.info("[TTS] Sent %d audio chunks.", chunk_count)
+                                if chunk_count == 0:
+                                    await send_error(websocket, VocoError(
+                                        code=ErrorCode.E_TTS_FAILED,
+                                        message="Voice synthesis returned no audio — check your Cartesia API key in Settings.",
+                                    ))
+                            except Exception as tts_exc:
+                                logger.error("[TTS] Synthesis failed: %s", tts_exc)
+                                await send_error(websocket, VocoError(
+                                    code=ErrorCode.E_TTS_FAILED,
+                                    message=f"Voice synthesis failed: {tts_exc}",
+                                ))
+                            finally:
+                                try:
+                                    await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
+                                except Exception:
+                                    pass
+                    elif msg_type == "tts_stop":
+                        # User clicked "Stop" on TTS playback
+                        await websocket.send_json({"type": "control", "action": "halt_audio_playback"})
                     elif msg_type == "mcp_result":
-                        # Route Tauri's response to the awaiting background job.
                         msg_id = payload.get("id", "")
                         future = _pending_rpc_futures.get(msg_id)
                         if future and not future.done():
                             future.set_result(message["text"])
-                            logger.info(
-                                "[WS] Routed mcp_result (call_id=%s) to background job.", msg_id
-                            )
+                            logger.info("[WS] Routed mcp_result (call_id=%s) to job.", msg_id)
                         else:
-                            logger.debug(
-                                "[WS] Received mcp_result with no pending future (call_id=%s).",
-                                msg_id,
-                            )
+                            logger.debug("[WS] mcp_result with no pending future (call_id=%s).", msg_id)
                     elif msg_type == "auth_sync":
                         try:
                             _auth_token = payload.get("token", "")
                             _auth_uid = payload.get("uid", "local")
                             _refresh_token = payload.get("refresh_token", "")
-                            # Verify JWT signature (fail-open in dev when secret not set)
                             _verify_supabase_jwt(_auth_token, _auth_uid)
-                            # Extract voco_session_token from Supabase user metadata
-                            # (LiteLLM virtual key stored in user_metadata by admin)
                             voco_token = payload.get("voco_session_token", "")
                             if not voco_token:
-                                # Fallback: check if the frontend included it
                                 voco_token = os.environ.get("LITELLM_SESSION_TOKEN", "")
                             if voco_token:
                                 set_session_token(voco_token)
-                            # Re-initialize Supabase client with user JWT for RLS
                             from src.db import set_auth_jwt
                             set_auth_jwt(_auth_token, _auth_uid, refresh_token=_refresh_token)
                             logger.info("[WS] auth_sync: uid=%s token_len=%d", _auth_uid, len(_auth_token))
                             debug_logger.log_ws_event("auth_sync", thread_id, {"uid": _auth_uid, "token_len": len(_auth_token)})
 
-                            # Look up stripe_customer_id + email from users table
                             try:
                                 _sb_url = os.environ.get("SUPABASE_URL", "")
                                 _sb_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
@@ -1593,7 +1234,6 @@ async def voco_stream(websocket: WebSocket) -> None:
                                                 _is_founder,
                                                 _user_tier,
                                             )
-                                            # Send tier + founder status to frontend (avoids frontend needing direct DB access)
                                             await websocket.send_json({
                                                 "type": "user_info",
                                                 "tier": _user_tier,
@@ -1614,10 +1254,6 @@ async def voco_stream(websocket: WebSocket) -> None:
                         for k, v in env_patch.items():
                             if k in _ALLOWED_ENV_KEYS and isinstance(v, str) and v:
                                 os.environ[k] = v
-                        # Toggle wake word requirement from settings
-                        if "wake_word" in env_patch:
-                            _wake_word_required = str(env_patch["wake_word"]).lower() not in ("false", "0", "off", "disabled")
-                            logger.info("[WS] Wake word requirement: %s", _wake_word_required)
                         logger.info("[WS] Environment updated: %s", list(env_patch.keys()))
                     elif msg_type == "cancel_job":
                         cancel_id = payload.get("job_id", "")
@@ -1625,20 +1261,13 @@ async def voco_stream(websocket: WebSocket) -> None:
                             background_queue.cancel_job(cancel_id)
                             logger.info("[WS] Cancel requested for job %s", cancel_id)
                     elif "jsonrpc" in payload and "id" in payload and "type" not in payload:
-                        # JSON-RPC response from Tauri (no "type" field).
-                        # Route to the awaiting background job future.
                         msg_id = payload.get("id", "")
                         future = _pending_rpc_futures.get(msg_id)
                         if future and not future.done():
                             future.set_result(message["text"])
-                            logger.info(
-                                "[WS] Routed JSON-RPC response (call_id=%s) to background job.", msg_id
-                            )
+                            logger.info("[WS] Routed JSON-RPC response (call_id=%s) to job.", msg_id)
                         else:
-                            logger.debug(
-                                "[WS] JSON-RPC response with no pending future (call_id=%s).",
-                                msg_id,
-                            )
+                            logger.debug("[WS] JSON-RPC response with no pending future (call_id=%s).", msg_id)
                     else:
                         logger.debug("[WS] Control message: %s", payload)
                 except json.JSONDecodeError:
@@ -1647,7 +1276,7 @@ async def voco_stream(websocket: WebSocket) -> None:
         logger.info("Client disconnected")
         debug_logger.log_ws_event("disconnect", thread_id, {"reason": "client_initiated"})
     except Exception as ws_exc:
-        logger.error("[WS] Unhandled exception in voco_stream — code 1006 prevented: %s", ws_exc, exc_info=True)
+        logger.error("[WS] Unhandled exception in voco_stream: %s", ws_exc, exc_info=True)
         debug_logger.log_ws_event("error", thread_id, {"reason": str(ws_exc)})
         try:
             await websocket.close(code=1011, reason="Internal server error")
@@ -1655,7 +1284,6 @@ async def voco_stream(websocket: WebSocket) -> None:
             pass
     finally:
         cleanup_task.cancel()
-        voice_bridge.unregister_ws(websocket)
         logger.info(
             "[Session] %s closed — turns=%d rpcs=%d timeouts=%d",
             thread_id,
@@ -1663,10 +1291,7 @@ async def voco_stream(websocket: WebSocket) -> None:
             _session_metrics["rpc_count"],
             _session_metrics["timeout_count"],
         )
-        vad.reset()
-        audio_buffer = bytearray()
         background_queue.cancel_all()
-        # Close SQLite checkpointer and prune old checkpoints (GAP #2).
         try:
             if _session_checkpointer and hasattr(_session_checkpointer, "conn"):
                 await _session_checkpointer.conn.close()
