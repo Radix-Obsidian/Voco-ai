@@ -80,8 +80,8 @@ pub fn run() {
                 if let Ok(Some(monitor)) = orb.primary_monitor() {
                     let size = monitor.size();
                     let scale = monitor.scale_factor();
-                    let x = (size.width as f64 / scale / 2.0) - 48.0;
-                    let y = (size.height as f64 / scale) - 120.0;
+                    let x = (size.width as f64 / scale / 2.0) - 24.0;
+                    let y = (size.height as f64 / scale) - 72.0;
                     orb.set_position(tauri::LogicalPosition::new(x, y)).ok();
                 }
                 orb.show().ok();
