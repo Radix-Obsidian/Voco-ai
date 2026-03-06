@@ -33,5 +33,6 @@ class VocoState(TypedDict):
     pending_commands: NotRequired[list[dict]]
     command_decisions: NotRequired[list[dict]]
     focused_context: NotRequired[str]
-    routed_model: NotRequired[str]  # "haiku" | "sonnet" — set by boss_router_node
+    user_tier: NotRequired[str]  # "free" | "paid" | "founder"
+    routed_model: NotRequired[str]  # "haiku" | "haiku_tools" | "sonnet" — set by boss_router_node
     turn_metadata: NotRequired[dict]  # prompt_hash, model_id, turn_number, token_count

@@ -145,6 +145,8 @@ _BOSS_CLASSIFY_PROMPT = (
 _sonnet_model = None
 _sonnet_tool_count = 0
 _haiku_model = None
+_haiku_tools_model = None
+_haiku_tools_count = 0
 
 # Per-session LiteLLM virtual key (set by main.py on auth_sync)
 _session_token: str = ""
@@ -157,10 +159,11 @@ def set_session_token(token: str) -> None:
     ``voco_session_token``.  Invalidating the cached models forces them
     to be re-created with the new api_key on the next invocation.
     """
-    global _session_token, _sonnet_model, _haiku_model
+    global _session_token, _sonnet_model, _haiku_model, _haiku_tools_model
     _session_token = token
     _sonnet_model = None
     _haiku_model = None
+    _haiku_tools_model = None
     logger.info("[Model] Session token updated — cached models invalidated.")
 
 
@@ -259,6 +262,34 @@ def _get_haiku():
     return _haiku_model
 
 
+def _get_haiku_with_tools():
+    """Lazily return claude-haiku-4-5 bound to all tools (cheap tool-use for free tier).
+
+    Uses direct Anthropic API if available, otherwise routes through LiteLLM proxy.
+    """
+    global _haiku_tools_model, _haiku_tools_count
+    all_tools = get_all_tools()
+    if _haiku_tools_model is None or len(all_tools) != _haiku_tools_count:
+        if _use_direct_anthropic():
+            from langchain_anthropic import ChatAnthropic
+            _haiku_tools_model = ChatAnthropic(
+                model="claude-haiku-4-5-20251001",
+                temperature=0,
+                api_key=os.environ["ANTHROPIC_API_KEY"],
+            ).bind_tools(all_tools)
+            logger.info("[Model] Haiku+Tools bound with %d tools (direct Anthropic API).", len(all_tools))
+        else:
+            _haiku_tools_model = ChatOpenAI(
+                base_url=_get_gateway_url(),
+                api_key=_get_api_key(),
+                model="claude-haiku-4-5-20251001",
+                temperature=0,
+            ).bind_tools(all_tools)
+            logger.info("[Model] Haiku+Tools bound with %d tools (via LiteLLM proxy).", len(all_tools))
+        _haiku_tools_count = len(all_tools)
+    return _haiku_tools_model
+
+
 def _get_boss():
     """Lazily return the Haiku classifier (no tools — classification only)."""
     return _get_haiku()
@@ -269,33 +300,49 @@ def _get_boss():
 # ---------------------------------------------------------------------------
 
 
-async def boss_router_node(state: VocoState) -> dict:
-    """Use Claude Haiku to classify the task and pick the right execution model.
+_FREE_TIER_TOOL_KEYWORDS = frozenset([
+    "search", "find", "edit", "write", "create", "delete", "run",
+    "execute", "debug", "fix", "github", "commit", "push", "pull",
+    "deploy", "install", "terminal", "command", "file", "code",
+    "read", "open", "build", "test", "lint",
+])
 
-    Routes:
-      haiku  → simple/conversational, no tools needed  → fast + cheap
-      sonnet → technical/code/tool-use                 → full capability
+
+async def boss_router_node(state: VocoState) -> dict:
+    """Tier-aware model router.
+
+    Free tier: keyword-only classification (no LLM call) → haiku or haiku_tools.
+    Paid/Founder: Haiku LLM classification → haiku or sonnet.
     """
     messages = state.get("messages", [])
     if not messages:
-        return {"routed_model": "sonnet"}
+        return {"routed_model": "haiku_tools"}
 
+    user_tier = state.get("user_tier", "free")
     last_text = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
 
+    if user_tier == "free":
+        # Free tier: skip LLM classification entirely to save cost
+        text_lower = last_text.lower()
+        has_tool_signal = any(kw in text_lower for kw in _FREE_TIER_TOOL_KEYWORDS)
+        route = "haiku_tools" if has_tool_signal else "haiku"
+        logger.info("[Boss Router] user_tier=free → %s | '%s...'", route.upper(), last_text[:60])
+        return {"routed_model": route}
+
+    # Paid / Founder: use Haiku LLM classification
     try:
         boss = _get_boss()
-        # Filter out SystemMessages from history to avoid Anthropic API rejection
         recent = [m for m in messages[-6:] if not isinstance(m, SystemMessage)]
         response: AIMessage = await boss.ainvoke(
             [SystemMessage(content=_BOSS_CLASSIFY_PROMPT), *recent]
         )
-        route = response.content.strip().lower().split()[0] if response.content else "sonnet"
-        route = route if route in ("haiku", "sonnet") else "sonnet"
+        route = response.content.strip().lower().split()[0] if response.content else "haiku_tools"
+        route = route if route in ("haiku", "sonnet") else "haiku_tools"
     except Exception as exc:
-        logger.warning("[Boss Router] Classification failed, defaulting to sonnet: %s", exc)
-        route = "sonnet"
+        logger.warning("[Boss Router] Classification failed, defaulting to haiku_tools: %s", exc)
+        route = "haiku_tools"
 
-    logger.info("[Boss Router 🧠] '%s...' → %s", last_text[:60], route.upper())
+    logger.info("[Boss Router] user_tier=%s → %s | '%s...'", user_tier, route.upper(), last_text[:60])
     return {"routed_model": route}
 
 
@@ -307,7 +354,7 @@ async def orchestrator_node(state: VocoState) -> dict:
       sonnet → technical tasks with full tool access
     """
     last_message = state["messages"][-1]
-    route = state.get("routed_model", "sonnet")
+    route = state.get("routed_model", "haiku_tools")
     logger.info("[Orchestrator 🧠] Model=%s | User: %s", route.upper(), last_message.content)
 
     focused = state.get("focused_context", "")
@@ -318,12 +365,17 @@ async def orchestrator_node(state: VocoState) -> dict:
 
     # Prompt hash + model ID for observability (Issue #7)
     prompt_hash = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()[:12]
-    model_id = "claude-sonnet-4-5-20250929" if route == "sonnet" else "claude-haiku-4-5-20251001"
+    model_id = "claude-sonnet-4-5-20250929" if route == "sonnet" else "claude-haiku-4-5-20251001"  # haiku and haiku_tools share model ID
     prev_meta = state.get("turn_metadata") or {}
     turn_number = prev_meta.get("turn_number", 0) + 1
     logger.info("[Orchestrator] prompt_hash=%s model=%s turn=%d", prompt_hash, model_id, turn_number)
 
-    model = _get_sonnet() if route == "sonnet" else _get_haiku()
+    if route == "sonnet":
+        model = _get_sonnet()
+    elif route == "haiku_tools":
+        model = _get_haiku_with_tools()
+    else:
+        model = _get_haiku()
 
     # Token budget guard — trim oldest messages if context would overflow (Issue #3)
     trimmed_messages = trim_messages_to_budget(

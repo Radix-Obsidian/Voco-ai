@@ -57,36 +57,48 @@ class TestContextRouterUI:
 
 
 # ---------------------------------------------------------------------------
-# 3. boss_router_node → haiku for chat
+# 3. boss_router_node — free tier: keyword-only (no LLM call)
 # ---------------------------------------------------------------------------
 
 
-class TestBossRouterHaiku:
+class TestBossRouterFreeTier:
     @pytest.mark.asyncio
-    async def test_routes_chat_to_haiku(self):
-        mock_boss = AsyncMock()
-        mock_boss.ainvoke.return_value = AIMessage(content="haiku")
+    async def test_free_chat_routes_to_haiku(self):
+        """Free user saying 'hello' → haiku (no tool keywords)."""
+        state = {"messages": [HumanMessage(content="Hello, how are you?")], "user_tier": "free"}
+        from src.graph.nodes import boss_router_node
+        result = await boss_router_node(state)
+        assert result["routed_model"] == "haiku"
 
-        state = {"messages": [HumanMessage(content="Hello, how are you?")]}
-
-        with patch("src.graph.nodes._get_boss", return_value=mock_boss):
-            from src.graph.nodes import boss_router_node
-            result = await boss_router_node(state)
-            assert result["routed_model"] == "haiku"
-
-
-# ---------------------------------------------------------------------------
-# 4. boss_router_node → sonnet for code
-# ---------------------------------------------------------------------------
-
-
-class TestBossRouterSonnet:
     @pytest.mark.asyncio
-    async def test_routes_code_to_sonnet(self):
+    async def test_free_tool_request_routes_to_haiku_tools(self):
+        """Free user with tool keyword → haiku_tools."""
+        state = {"messages": [HumanMessage(content="search for useState in my project")], "user_tier": "free"}
+        from src.graph.nodes import boss_router_node
+        result = await boss_router_node(state)
+        assert result["routed_model"] == "haiku_tools"
+
+    @pytest.mark.asyncio
+    async def test_free_default_tier(self):
+        """Missing user_tier defaults to free → keyword routing."""
+        state = {"messages": [HumanMessage(content="hello")]}
+        from src.graph.nodes import boss_router_node
+        result = await boss_router_node(state)
+        assert result["routed_model"] == "haiku"
+
+
+# ---------------------------------------------------------------------------
+# 4. boss_router_node — paid/founder: LLM classification → haiku or sonnet
+# ---------------------------------------------------------------------------
+
+
+class TestBossRouterPaidTier:
+    @pytest.mark.asyncio
+    async def test_paid_routes_code_to_sonnet(self):
         mock_boss = AsyncMock()
         mock_boss.ainvoke.return_value = AIMessage(content="sonnet")
 
-        state = {"messages": [HumanMessage(content="Write a rate limiter middleware in Express")]}
+        state = {"messages": [HumanMessage(content="Write a rate limiter middleware in Express")], "user_tier": "paid"}
 
         with patch("src.graph.nodes._get_boss", return_value=mock_boss):
             from src.graph.nodes import boss_router_node
@@ -94,11 +106,23 @@ class TestBossRouterSonnet:
             assert result["routed_model"] == "sonnet"
 
     @pytest.mark.asyncio
-    async def test_defaults_to_sonnet_on_failure(self):
+    async def test_paid_defaults_to_haiku_tools_on_failure(self):
         mock_boss = AsyncMock()
         mock_boss.ainvoke.side_effect = RuntimeError("API down")
 
-        state = {"messages": [HumanMessage(content="anything")]}
+        state = {"messages": [HumanMessage(content="anything")], "user_tier": "paid"}
+
+        with patch("src.graph.nodes._get_boss", return_value=mock_boss):
+            from src.graph.nodes import boss_router_node
+            result = await boss_router_node(state)
+            assert result["routed_model"] == "haiku_tools"
+
+    @pytest.mark.asyncio
+    async def test_founder_uses_llm_classification(self):
+        mock_boss = AsyncMock()
+        mock_boss.ainvoke.return_value = AIMessage(content="sonnet")
+
+        state = {"messages": [HumanMessage(content="debug this function")], "user_tier": "founder"}
 
         with patch("src.graph.nodes._get_boss", return_value=mock_boss):
             from src.graph.nodes import boss_router_node

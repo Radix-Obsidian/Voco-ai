@@ -25,7 +25,7 @@ TTS_GRACE_PERIOD: float = 1.5  # Delay after TTS before re-enabling mic
 TTS_TAIL_DELAY: float = 0.6  # Delay before resuming mic after TTS ends
 
 # Model settings
-DEFAULT_MODEL: str = "sonnet"  # claude-sonnet-4-5
+DEFAULT_MODEL: str = "haiku_tools"  # claude-haiku-4-5 with tools (cost-safe default)
 FALLBACK_MODEL: str = "haiku"  # claude-haiku-4-5
 
 # Environment keys

@@ -449,6 +449,7 @@ async def voco_stream(websocket: WebSocket) -> None:
     _stripe_customer_id = ""
     _user_email = ""
     _is_founder = False
+    _user_tier = "free"
 
     FOUNDER_EMAILS = {
         "autrearchitect@gmail.com",
@@ -658,7 +659,10 @@ async def voco_stream(websocket: WebSocket) -> None:
         try:
             result = await asyncio.wait_for(
                 graph.ainvoke(
-                    {"messages": [HumanMessage(content=transcript)]},
+                    {
+                        "messages": [HumanMessage(content=transcript)],
+                        "user_tier": "founder" if _is_founder else _user_tier,
+                    },
                     config=config,
                 ),
                 timeout=60.0,
@@ -1444,7 +1448,7 @@ async def voco_stream(websocket: WebSocket) -> None:
                 if text:
                     asyncio.create_task(_safe_text_input(text))
             elif msg_type == "auth_sync":
-                nonlocal _auth_token, _auth_uid, _stripe_customer_id, _user_email, _is_founder
+                nonlocal _auth_token, _auth_uid, _stripe_customer_id, _user_email, _is_founder, _user_tier
                 _auth_token = payload.get("token", "")
                 _auth_uid = payload.get("uid", "local")
                 _refresh_token = payload.get("refresh_token", "")
