@@ -440,6 +440,102 @@ def propose_file_edit(file_path: str, diff: str, description: str, cowork_ready:
     }
 
 
+@tool
+def orgo_create_sandbox(project_name: str, setup_commands: str = "") -> dict:
+    """Create a cloud compute sandbox for running full-stack applications.
+
+    Use this when the user needs to build or run something that requires:
+    - npm/yarn/pnpm projects with real build steps
+    - Server-side code (Express, FastAPI, Django, etc.)
+    - Multi-file projects requiring a real filesystem
+    - Database servers (Postgres, Redis, etc.)
+    - Any computation that can't fit in a single HTML file
+
+    The sandbox is a real Linux VM with full terminal access.
+    After creation, use orgo_run_command to install dependencies and start servers.
+
+    Args:
+        project_name: Short name for the project (used as VM label).
+        setup_commands: Optional shell commands to run after VM boots
+            (e.g. "npm init -y && npm install express").
+    """
+    return {
+        "method": "orgo/create_sandbox",
+        "params": {"project_name": project_name, "setup_commands": setup_commands},
+    }
+
+
+@tool
+def orgo_run_command(command: str, timeout: int = 30) -> dict:
+    """Run a shell command in the active cloud sandbox.
+
+    The sandbox is an isolated cloud VM — commands here do NOT touch the user's
+    local machine. No user approval needed. Use for npm install, starting servers,
+    running tests, git operations within the sandbox, etc.
+
+    Args:
+        command: Shell command to execute (e.g. "npm install", "python app.py &").
+        timeout: Max seconds to wait for output (default 30).
+    """
+    return {
+        "method": "orgo/run_command",
+        "params": {"command": command, "timeout": timeout},
+    }
+
+
+@tool
+def orgo_run_python(code: str, timeout: int = 10) -> dict:
+    """Execute Python code directly in the cloud sandbox.
+
+    Args:
+        code: Python code to execute.
+        timeout: Max seconds (default 10).
+    """
+    return {
+        "method": "orgo/run_python",
+        "params": {"code": code, "timeout": timeout},
+    }
+
+
+@tool
+def orgo_screenshot() -> dict:
+    """Capture a screenshot of the cloud sandbox desktop.
+
+    Use to verify UI state, check running applications, or debug visual issues
+    in the sandbox environment.
+    """
+    return {
+        "method": "orgo/screenshot",
+        "params": {},
+    }
+
+
+@tool
+def orgo_upload_file(file_path: str, content: str) -> dict:
+    """Upload a file to the cloud sandbox filesystem.
+
+    Args:
+        file_path: Destination path in the sandbox (e.g. "/home/user/app/index.js").
+        content: File content as string.
+    """
+    return {
+        "method": "orgo/upload_file",
+        "params": {"file_path": file_path, "content": content},
+    }
+
+
+@tool
+def orgo_stop_sandbox() -> dict:
+    """Stop and destroy the active cloud sandbox.
+
+    Use when the user is done with the sandbox or wants to start fresh.
+    """
+    return {
+        "method": "orgo/stop_sandbox",
+        "params": {},
+    }
+
+
 def get_all_tools():
     """Return all tools, lazily instantiating Tavily so .env is loaded first.
 
@@ -462,5 +558,11 @@ def get_all_tools():
         generate_and_preview_mvp,
         update_sandbox_preview,
         delegate_to_claude_code,
+        orgo_create_sandbox,
+        orgo_run_command,
+        orgo_run_python,
+        orgo_screenshot,
+        orgo_upload_file,
+        orgo_stop_sandbox,
         *mcp_registry.get_tools(),
     ]

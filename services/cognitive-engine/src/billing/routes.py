@@ -64,15 +64,18 @@ def _get_meter_item_id() -> str:
 # ---------------------------------------------------------------------------
 
 
+_FRONTEND_URL = os.environ.get("VOCO_FRONTEND_URL", "http://localhost:1420")
+
+
 class CheckoutRequest(BaseModel):
     customer_email: str = ""
-    success_url: str = "http://localhost:1420"
-    cancel_url: str = "http://localhost:1420"
+    success_url: str = _FRONTEND_URL
+    cancel_url: str = _FRONTEND_URL
 
 
 class PortalRequest(BaseModel):
     customer_id: str
-    return_url: str = "http://localhost:1420"
+    return_url: str = _FRONTEND_URL
 
 
 # ---------------------------------------------------------------------------
@@ -187,18 +190,18 @@ async def stripe_webhook(request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
-# Voice pipeline integration — call this after every turn
+# Usage reporting — call this after every turn
 # ---------------------------------------------------------------------------
 
 
-async def report_voice_turn(quantity: int = 1, customer_id: str = "") -> None:
-    """Emit a Stripe Billing Meter Event for each completed heavy voice turn.
+async def report_turn(quantity: int = 1, customer_id: str = "") -> None:
+    """Emit a Stripe Billing Meter Event for each completed turn.
 
     Uses the new Stripe Meters API (2025-03-31.basil+).  The meter event
     is identified by STRIPE_METER_EVENT_NAME (default: heavy_voice_turn).
 
     Fire-and-forget safe: all errors are caught and logged so a Stripe outage
-    never blocks the voice pipeline.  Uses ``asyncio.to_thread`` because the
+    never blocks the pipeline.  Uses ``asyncio.to_thread`` because the
     stripe-python SDK is synchronous.
     """
     key = os.environ.get("STRIPE_SECRET_KEY", "")

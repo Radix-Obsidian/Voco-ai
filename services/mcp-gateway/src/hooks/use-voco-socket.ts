@@ -97,6 +97,13 @@ export function useVocoSocket() {
   const [claudeCodeDelegation, setClaudeCodeDelegation] = useState<ClaudeCodeDelegation | null>(null);
   const [sandboxUrl, setSandboxUrl] = useState<string | null>(null);
   const [sandboxRefreshKey, setSandboxRefreshKey] = useState(0);
+  const [orgoSandbox, setOrgoSandbox] = useState<{
+    computerId: string;
+    status: "booting" | "running" | "stopped";
+    vncUrl: string | null;
+    vncPassword: string | null;
+    commandHistory: Array<{ command: string; output: string; timestamp: number }>;
+  } | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [lastError, setLastError] = useState<{ code: string; message: string; recoverable: boolean } | null>(null);
   const [turnCount, setTurnCount] = useState(0);
@@ -515,6 +522,31 @@ export function useVocoSocket() {
           setSandboxRefreshKey((prev) => prev + 1);
         } else if (msg.type === "sandbox_updated") {
           setSandboxRefreshKey((prev) => prev + 1);
+        } else if (msg.type === "orgo_sandbox_live") {
+          setOrgoSandbox({
+            computerId: msg.computer_id as string,
+            status: "running",
+            vncUrl: (msg.vnc_url as string) || null,
+            vncPassword: (msg.vnc_password as string) || null,
+            commandHistory: [],
+          });
+          // Close any existing HTML sandbox
+          setSandboxUrl(null);
+        } else if (msg.type === "orgo_command_output") {
+          setOrgoSandbox((prev) => {
+            if (!prev) return prev;
+            const newHistory = [
+              ...prev.commandHistory,
+              {
+                command: msg.command as string,
+                output: (msg.output as string) || "",
+                timestamp: Date.now(),
+              },
+            ].slice(-50); // Keep last 50 entries
+            return { ...prev, commandHistory: newHistory };
+          });
+        } else if (msg.type === "orgo_sandbox_stopped") {
+          setOrgoSandbox(null);
         } else if (msg.type === "scan_security_request") {
           const requestId: string = msg.id ?? "";
           const projectPath: string = msg.project_path ?? "";
@@ -617,6 +649,8 @@ export function useVocoSocket() {
     sandboxUrl,
     sandboxRefreshKey,
     setSandboxUrl,
+    orgoSandbox,
+    setOrgoSandbox,
     sessionId,
     lastError,
     isReconnecting,

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, Mic, Brain, Shield, Zap } from "lucide-react";
+import { X, MessageSquare, Brain, Shield, Zap } from "lucide-react";
 
 interface OnboardingTourProps {
   onComplete: () => void;
@@ -13,10 +13,10 @@ const steps = [
     body: "Voco is a sub-300ms voice-to-code orchestrator. Speak naturally, and Voco will search your codebase, write files, run terminal commands, and explain results — all locally on your machine.",
   },
   {
-    title: "Voice First, Always",
-    subtitle: "Speak or Type — ⌘K to switch",
-    icon: Mic,
-    body: "Tap the orb to start speaking. Voco uses neural voice activity detection (Silero VAD) to know when you're done. Need precision? Hit ⌘K to switch to text mode anytime.",
+    title: "Text-First, Intent-Driven",
+    subtitle: "Type Your Intent — Voco Executes",
+    icon: MessageSquare,
+    body: "Type what you want in the chat. Voco interprets your intent, searches your codebase, proposes changes, and can even spin up a cloud sandbox to build full-stack apps — all with your approval.",
   },
   {
     title: "Your Intent Ledger",

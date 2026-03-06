@@ -33,6 +33,11 @@ ALLOWED_ENV_KEYS: set[str] = {
     "GOOGLE_API_KEY",
 }
 
+# Cloud Sandbox (Orgo.ai)
+ORGO_BOOT_TIMEOUT: float = 30.0  # Max wait for VM to start
+ORGO_DEFAULT_RAM: int = 4  # GB
+ORGO_DEFAULT_CPU: int = 2  # cores
+
 # Claude Code delegation
 CLAUDE_CODE_TIMEOUT: float = 300.0  # 5 min max for Claude Code subprocess
 

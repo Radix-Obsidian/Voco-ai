@@ -7,6 +7,7 @@ import { SettingsModal } from "@/components/SettingsModal";
 import { PricingModal } from "@/components/PricingModal";
 import { OnboardingTour } from "@/components/OnboardingTour";
 import { SandboxPreview } from "@/components/SandboxPreview";
+import { OrgoSandboxView } from "@/components/OrgoSandboxView";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
 import { ChatThread } from "@/components/ChatThread";
 import { Send } from "lucide-react";
@@ -42,6 +43,8 @@ const AppPage = () => {
     sandboxUrl,
     sandboxRefreshKey,
     setSandboxUrl,
+    orgoSandbox,
+    setOrgoSandbox,
     sendAuthSync,
     messages,
     sendMessage,
@@ -165,13 +168,15 @@ const AppPage = () => {
   const hasSidebarContent = !!ledgerState || backgroundJobs.length > 0 || !!terminalOutput || proposals.length > 0 || commandProposals.length > 0 || !!claudeCodeDelegation;
 
   const isSandboxActive = !!sandboxUrl;
+  const isOrgoActive = !!orgoSandbox;
+  const hasSplitPanel = isSandboxActive || isOrgoActive;
 
   /* ====== Chat panel ====== */
   const chatPanel = (
     <main
       className={`flex flex-col transition-all duration-500
-        ${isSandboxActive ? "w-[420px] min-w-[340px] shrink-0 h-full" : "flex-1 min-h-screen"}
-        ${hasSidebarContent && !isSandboxActive ? "lg:pr-[440px]" : ""}
+        ${hasSplitPanel ? "w-[420px] min-w-[340px] shrink-0 h-full" : "flex-1 min-h-screen"}
+        ${hasSidebarContent && !hasSplitPanel ? "lg:pr-[440px]" : ""}
       `}
     >
       {/* Connection status */}
@@ -248,15 +253,22 @@ const AppPage = () => {
       />
 
       {/* Content area */}
-      {isSandboxActive ? (
+      {hasSplitPanel ? (
         <div className="flex flex-1 overflow-hidden">
           {chatPanel}
           <div className="flex-1 overflow-hidden">
-            <SandboxPreview
-              url={sandboxUrl!}
-              refreshKey={sandboxRefreshKey}
-              onClose={() => setSandboxUrl(null)}
-            />
+            {isOrgoActive ? (
+              <OrgoSandboxView
+                sandbox={orgoSandbox!}
+                onClose={() => setOrgoSandbox?.(null)}
+              />
+            ) : (
+              <SandboxPreview
+                url={sandboxUrl!}
+                refreshKey={sandboxRefreshKey}
+                onClose={() => setSandboxUrl(null)}
+              />
+            )}
           </div>
         </div>
       ) : (

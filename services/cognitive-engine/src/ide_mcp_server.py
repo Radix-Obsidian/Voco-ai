@@ -107,44 +107,6 @@ async def _list_tools() -> list[Tool]:
                 "required": ["prompt"],
             },
         ),
-        Tool(
-            name="voco_voice_input",
-            description=(
-                "Activate the microphone in the Voco desktop app and listen for "
-                "the user's voice. Returns the transcribed text. The Voco app must "
-                "be running. Use this instead of asking the user to type."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "prompt": {
-                        "type": "string",
-                        "description": "Optional prompt shown to the user while listening.",
-                    },
-                    "timeout": {
-                        "type": "number",
-                        "description": "Max seconds to wait for speech (default 30).",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="voco_speak",
-            description=(
-                "Speak text aloud through the Voco desktop app using text-to-speech. "
-                "The Voco app must be running. Use for important audible responses."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "The text to speak aloud.",
-                    }
-                },
-                "required": ["text"],
-            },
-        ),
     ]
 
 
@@ -221,21 +183,6 @@ async def _call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         except Exception as exc:
             logger.error("[IDE MCP] voco_ask error: %s", exc, exc_info=True)
             return [TextContent(type="text", text=f"Error: {exc}")]
-
-    # ---- voco_voice_input (deprecated — voice input removed in V2.5) ----
-    if name == "voco_voice_input":
-        return [TextContent(
-            type="text",
-            text="Voice input is not available in this version. Please use text input instead.",
-        )]
-
-    # ---- voco_speak (deprecated — use TTS playback via desktop app) ----
-    if name == "voco_speak":
-        return [TextContent(
-            type="text",
-            text="Voice output is now handled via the desktop app's 'Read aloud' feature. "
-                 "This MCP tool is no longer available.",
-        )]
 
     return [TextContent(type="text", text=f"Unknown tool: '{name}'")]
 

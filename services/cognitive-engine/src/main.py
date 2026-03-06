@@ -31,7 +31,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langgraph.types import Command
 
 from src.auth.routes import router as auth_router
-from src.billing.routes import router as billing_router, report_voice_turn
+from src.billing.routes import router as billing_router, report_turn
 from src.db import sync_ledger_to_supabase, update_ledger_node
 from src.graph.background_worker import BackgroundJobQueue
 from src.ide_mcp_server import attach_ide_mcp_routes
@@ -241,8 +241,8 @@ async def _run_claude_code(
         try:
             proc.kill()  # type: ignore[possibly-undefined]
             await proc.wait()  # type: ignore[possibly-undefined]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[ClaudeCode] Process cleanup failed: %s", exc)
         return {
             "success": False,
             "summary": f"Claude Code timed out after {int(CLAUDE_CODE_TIMEOUT)}s.",
@@ -325,7 +325,14 @@ async def get_debug_events(limit: int = 100) -> dict:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok"}
+    checks = {
+        "anthropic_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "cartesia_key": bool(os.environ.get("CARTESIA_API_KEY")),
+        "orgo_key": bool(os.environ.get("ORGO_API_KEY")),
+        "supabase_url": bool(os.environ.get("SUPABASE_URL")),
+    }
+    all_ok = all(checks.values())
+    return {"status": "ok" if all_ok else "degraded", "checks": checks}
 
 
 @app.get("/sandbox", response_class=HTMLResponse)
@@ -388,6 +395,9 @@ async def voco_stream(websocket: WebSocket) -> None:
 
     # Session-level metrics
     _session_metrics = {"timeout_count": 0, "rpc_count": 0, "turn_count": 0}
+
+    # Orgo cloud sandbox manager (created lazily on first orgo_create_sandbox call)
+    _orgo_manager = None
 
     async def _cleanup_stale_futures(max_age_seconds: float = RPC_FUTURE_MAX_AGE) -> None:
         """Remove stale futures that have timed out or completed."""
@@ -763,7 +773,9 @@ async def voco_stream(websocket: WebSocket) -> None:
                 html_code = tool_args.get("html_code", "")
                 _sandbox_html["current"] = html_code
                 is_update = tool_name == "update_sandbox_preview"
-                sandbox_url = "http://localhost:8001/sandbox"
+                _host = os.environ.get("VOCO_HOST", "localhost")
+                _port = os.environ.get("VOCO_PORT", "8001")
+                sandbox_url = f"http://{_host}:{_port}/sandbox"
 
                 await websocket.send_json({
                     "type": "sandbox_updated" if is_update else "sandbox_live",
@@ -780,7 +792,7 @@ async def voco_stream(websocket: WebSocket) -> None:
                     content=(
                         "Sandbox preview updated. The user can see the changes instantly."
                         if is_update else
-                        "MVP sandbox is live at http://localhost:8001/sandbox. "
+                        f"MVP sandbox is live at {sandbox_url}. "
                         "The preview is now visible on the right side of the screen."
                     ),
                     tool_call_id=call_id,
@@ -852,6 +864,181 @@ async def voco_stream(websocket: WebSocket) -> None:
                 )
                 _screen_handled = True
 
+            # --- Orgo Cloud Sandbox ---
+            elif tool_name == "orgo_create_sandbox":
+                await _send_ledger_update(
+                    domain=detected_domain,
+                    context_router="completed",
+                    orchestrator="active",
+                    tools="active",
+                )
+                project_name = tool_args.get("project_name", "sandbox")
+                setup_cmds = tool_args.get("setup_commands", "")
+
+                from src.orgo_client import OrgoVMManager, OrgoError
+                if _orgo_manager is None:
+                    _orgo_manager = OrgoVMManager()
+
+                try:
+                    vm_info = await _orgo_manager.create_vm(project_name)
+                    computer_id = vm_info["computer_id"]
+
+                    # Run setup commands if provided
+                    setup_output = ""
+                    if setup_cmds:
+                        setup_result = await _orgo_manager.run_bash(setup_cmds, timeout=60.0)
+                        setup_output = str(setup_result.get("output", setup_result.get("stdout", "")))
+
+                    # Get VNC credentials for live desktop streaming
+                    vnc_creds = await _orgo_manager.get_vnc_credentials()
+
+                    await websocket.send_json({
+                        "type": "orgo_sandbox_live",
+                        "computer_id": computer_id,
+                        "vnc_url": vnc_creds["vnc_url"],
+                        "vnc_password": vnc_creds["vnc_password"],
+                        "status": "running",
+                    })
+
+                    content_parts = [
+                        f"Cloud sandbox '{project_name}' is live (VM: {computer_id}). "
+                        "The user can see a live interactive desktop stream in the right panel.",
+                    ]
+                    if setup_output:
+                        content_parts.append(f"Setup output:\n{setup_output[:500]}")
+
+                    sandbox_tool_msg = ToolMessage(
+                        content="\n".join(content_parts),
+                        tool_call_id=call_id,
+                    )
+                    result = await graph.ainvoke({"messages": [sandbox_tool_msg]}, config=config)
+                except OrgoError as exc:
+                    err_msg = ToolMessage(
+                        content=f"Failed to create cloud sandbox: {exc}",
+                        tool_call_id=call_id,
+                    )
+                    result = await graph.ainvoke({"messages": [err_msg]}, config=config)
+                _screen_handled = True
+
+            elif tool_name == "orgo_run_command":
+                from src.orgo_client import OrgoError
+                command = tool_args.get("command", "")
+                timeout = tool_args.get("timeout", 30)
+
+                try:
+                    cmd_result = await _orgo_manager.run_bash(command, timeout=float(timeout))
+                    output = str(cmd_result.get("output", cmd_result.get("stdout", "")))
+                    exit_code = cmd_result.get("exit_code", 0)
+
+                    await websocket.send_json({
+                        "type": "orgo_command_output",
+                        "command": command,
+                        "output": output[:2000],
+                        "exit_code": exit_code,
+                    })
+
+                    tool_msg = ToolMessage(
+                        content=f"Command: {command}\nExit code: {exit_code}\nOutput:\n{output[:1500]}",
+                        tool_call_id=call_id,
+                    )
+                except (OrgoError, AttributeError) as exc:
+                    tool_msg = ToolMessage(
+                        content=f"Command failed: {exc}",
+                        tool_call_id=call_id,
+                    )
+                result = await graph.ainvoke({"messages": [tool_msg]}, config=config)
+                _screen_handled = True
+
+            elif tool_name == "orgo_run_python":
+                from src.orgo_client import OrgoError
+                code = tool_args.get("code", "")
+                timeout = tool_args.get("timeout", 10)
+
+                try:
+                    py_result = await _orgo_manager.run_python(code, timeout=float(timeout))
+                    output = str(py_result.get("output", py_result.get("stdout", "")))
+
+                    tool_msg = ToolMessage(
+                        content=f"Python output:\n{output[:1500]}",
+                        tool_call_id=call_id,
+                    )
+                except (OrgoError, AttributeError) as exc:
+                    tool_msg = ToolMessage(
+                        content=f"Python execution failed: {exc}",
+                        tool_call_id=call_id,
+                    )
+                result = await graph.ainvoke({"messages": [tool_msg]}, config=config)
+                _screen_handled = True
+
+            elif tool_name == "orgo_screenshot":
+                from src.orgo_client import OrgoError
+
+                try:
+                    screenshot_b64 = await _orgo_manager.take_screenshot()
+
+                    await websocket.send_json({
+                        "type": "orgo_screenshot",
+                        "image": screenshot_b64,
+                    })
+
+                    # Send vision content to Claude
+                    vision_content = [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{screenshot_b64}"},
+                        },
+                        {
+                            "type": "text",
+                            "text": "This is a screenshot of the cloud sandbox desktop. Describe what you see.",
+                        },
+                    ]
+                    tool_msg = ToolMessage(content=vision_content, tool_call_id=call_id)
+                except (OrgoError, AttributeError) as exc:
+                    tool_msg = ToolMessage(
+                        content=f"Screenshot failed: {exc}",
+                        tool_call_id=call_id,
+                    )
+                result = await graph.ainvoke({"messages": [tool_msg]}, config=config)
+                _screen_handled = True
+
+            elif tool_name == "orgo_upload_file":
+                from src.orgo_client import OrgoError
+                file_path = tool_args.get("file_path", "")
+                content = tool_args.get("content", "")
+
+                try:
+                    upload_result = await _orgo_manager.upload_file(file_path, content)
+                    tool_msg = ToolMessage(
+                        content=f"File uploaded to sandbox: {file_path}",
+                        tool_call_id=call_id,
+                    )
+                except (OrgoError, AttributeError) as exc:
+                    tool_msg = ToolMessage(
+                        content=f"Upload failed: {exc}",
+                        tool_call_id=call_id,
+                    )
+                result = await graph.ainvoke({"messages": [tool_msg]}, config=config)
+                _screen_handled = True
+
+            elif tool_name == "orgo_stop_sandbox":
+                from src.orgo_client import OrgoError
+
+                try:
+                    if _orgo_manager:
+                        await _orgo_manager.destroy_vm()
+                    await websocket.send_json({"type": "orgo_sandbox_stopped"})
+                    tool_msg = ToolMessage(
+                        content="Cloud sandbox has been stopped and destroyed.",
+                        tool_call_id=call_id,
+                    )
+                except (OrgoError, AttributeError) as exc:
+                    tool_msg = ToolMessage(
+                        content=f"Failed to stop sandbox: {exc}",
+                        tool_call_id=call_id,
+                    )
+                result = await graph.ainvoke({"messages": [tool_msg]}, config=config)
+                _screen_handled = True
+
             # --- Synchronous Agentic Loop — tool call → Tauri RPC → result → Claude → repeat ---
             if not _screen_handled:
                 _fallback_path = (
@@ -904,8 +1091,8 @@ async def voco_stream(websocket: WebSocket) -> None:
                             await websocket.send_json({"type": "heartbeat"})
                     except asyncio.CancelledError:
                         pass
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("[WS] Heartbeat send failed: %s", exc)
 
                 _heartbeat_task = asyncio.create_task(_heartbeat())
 
@@ -975,8 +1162,8 @@ async def voco_stream(websocket: WebSocket) -> None:
                             "job_id": job_id,
                             "tool_name": tool_name,
                         })
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("[WS] Background job completion send failed: %s", exc)
 
                     tool_result_msg = ToolMessage(
                         content=tool_result_str[:4000],
@@ -1030,7 +1217,7 @@ async def voco_stream(websocket: WebSocket) -> None:
         if _is_founder:
             logger.debug("[Billing] Skipping meter for founder %s", _user_email)
         else:
-            asyncio.create_task(report_voice_turn(customer_id=_stripe_customer_id))
+            asyncio.create_task(report_turn(customer_id=_stripe_customer_id))
 
         # --- Supabase Logic Ledger sync ---
         domain_icon = {"database": "Database", "ui": "FileCode2", "api": "Terminal", "devops": "Terminal", "git": "Terminal", "general": "FileCode2"}
@@ -1076,8 +1263,8 @@ async def voco_stream(websocket: WebSocket) -> None:
                 ))
                 try:
                     await _send_ledger_clear()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("[WS] Ledger clear failed: %s", exc)
             finally:
                 _turn_in_progress = False
 
@@ -1178,8 +1365,8 @@ async def voco_stream(websocket: WebSocket) -> None:
                             finally:
                                 try:
                                     await websocket.send_json({"type": "control", "action": "tts_end", "tts_active": False})
-                                except Exception:
-                                    pass
+                                except Exception as exc:
+                                    logger.debug("[WS] TTS end control message failed: %s", exc)
                     elif msg_type == "tts_stop":
                         # User clicked "Stop" on TTS playback
                         await websocket.send_json({"type": "control", "action": "halt_audio_playback"})
@@ -1280,8 +1467,8 @@ async def voco_stream(websocket: WebSocket) -> None:
         debug_logger.log_ws_event("error", thread_id, {"reason": str(ws_exc)})
         try:
             await websocket.close(code=1011, reason="Internal server error")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("[WS] Close after error failed: %s", exc)
     finally:
         cleanup_task.cancel()
         logger.info(
@@ -1292,6 +1479,19 @@ async def voco_stream(websocket: WebSocket) -> None:
             _session_metrics["timeout_count"],
         )
         background_queue.cancel_all()
+        # Destroy Orgo VM if active (prevent VM leaks)
+        if _orgo_manager is not None:
+            try:
+                await _orgo_manager.destroy_vm()
+                await _orgo_manager.close()
+                logger.info("[Orgo] Session VM cleaned up for %s", thread_id)
+            except Exception as orgo_exc:
+                logger.warning("[Orgo] Cleanup error for %s: %s", thread_id, orgo_exc)
+        # Cancel pending RPC futures
+        for fid, fut in _pending_rpc_futures.items():
+            if not fut.done():
+                fut.cancel()
+        _pending_rpc_futures.clear()
         try:
             if _session_checkpointer and hasattr(_session_checkpointer, "conn"):
                 await _session_checkpointer.conn.close()

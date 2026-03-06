@@ -34,3 +34,4 @@ class VocoState(TypedDict):
     user_tier: NotRequired[str]  # "free" | "paid" | "founder"
     routed_model: NotRequired[str]  # "haiku" | "haiku_tools" | "sonnet" — set by boss_router_node
     turn_metadata: NotRequired[dict]  # prompt_hash, model_id, turn_number, token_count
+    orgo_computer_id: NotRequired[Optional[str]]  # Active Orgo cloud sandbox VM ID

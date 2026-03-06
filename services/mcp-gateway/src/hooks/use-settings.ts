@@ -24,10 +24,6 @@ async function _nativeSave(settings: VocoSettings): Promise<void> {
 
 export interface VocoSettings {
   GITHUB_TOKEN: string;
-  TTS_VOICE: string;
-  WAKE_WORD: boolean;
-  STT_PROVIDER: "deepgram" | "whisper-local";
-  WHISPER_MODEL: string;
   GLOBAL_HOTKEY: string;
 }
 
@@ -35,10 +31,6 @@ const STORAGE_KEY = "voco-settings";
 
 const DEFAULT_SETTINGS: VocoSettings = {
   GITHUB_TOKEN: "",
-  TTS_VOICE: "british-professional",
-  WAKE_WORD: true,
-  STT_PROVIDER: "deepgram",
-  WHISPER_MODEL: "base.en",
   GLOBAL_HOTKEY: "Alt+Space",
 };
 
@@ -51,27 +43,6 @@ function loadSettings(): VocoSettings {
   }
 }
 
-export const TTS_VOICES = [
-  { value: "british-professional", label: "British Professional" },
-  { value: "american-casual", label: "American Casual" },
-  { value: "upbeat-startup", label: "Upbeat Startup" },
-  { value: "calm-narrator", label: "Calm Narrator" },
-];
-
-export const STT_PROVIDERS = [
-  { value: "deepgram", label: "Deepgram (Cloud)", description: "Fast, accurate — requires internet" },
-  { value: "whisper-local", label: "Whisper (Local)", description: "Fully offline — runs on your machine" },
-] as const;
-
-export const WHISPER_MODELS = [
-  { value: "tiny.en", label: "Tiny (English)", size: "~75 MB", speed: "fastest" },
-  { value: "base.en", label: "Base (English)", size: "~150 MB", speed: "fast" },
-  { value: "small.en", label: "Small (English)", size: "~500 MB", speed: "balanced" },
-  { value: "medium.en", label: "Medium (English)", size: "~1.5 GB", speed: "accurate" },
-  { value: "tiny", label: "Tiny (Multilingual)", size: "~75 MB", speed: "fastest" },
-  { value: "base", label: "Base (Multilingual)", size: "~150 MB", speed: "fast" },
-  { value: "small", label: "Small (Multilingual)", size: "~500 MB", speed: "balanced" },
-] as const;
 
 export function useSettings() {
   const [settings, setSettings] = useState<VocoSettings>(loadSettings);
@@ -114,10 +85,6 @@ export function useSettings() {
           type: "update_env",
           env: {
             GITHUB_TOKEN: settings.GITHUB_TOKEN,
-            TTS_VOICE: settings.TTS_VOICE,
-            STT_PROVIDER: settings.STT_PROVIDER,
-            WHISPER_MODEL: settings.WHISPER_MODEL,
-            wake_word: settings.WAKE_WORD ? "true" : "false",
           },
         })
       );
