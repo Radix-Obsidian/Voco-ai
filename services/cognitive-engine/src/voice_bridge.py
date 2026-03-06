@@ -97,10 +97,15 @@ class VoiceBridge:
         # Wait for TTS to fully drain before activating mic (prevents echo)
         if self._tts_playing:
             logger.info("[VoiceBridge] Waiting for TTS to finish before mic activation...")
-            for _ in range(40):  # up to 4s
+            for _ in range(60):  # up to 6s
                 await asyncio.sleep(0.1)
                 if not self._tts_playing:
                     break
+
+        # Extra post-TTS silence gap — the frontend suppresses mic for 2s
+        # after tts_end; we wait for that window to fully close plus margin
+        # so the mic doesn't pick up speaker reverb / room echo.
+        await asyncio.sleep(2.5)
 
         loop = asyncio.get_running_loop()
         self._pending_future = loop.create_future()
@@ -167,10 +172,14 @@ class VoiceBridge:
                     break
                 await self._ws.send_bytes(chunk)
         finally:
+            # Signal frontend to suppress mic during speaker drain
             await self._ws.send_json({"type": "control", "action": "tts_end"})
             if not self._barged_in:
-                # Wait for speaker to fully drain + frontend mic-resume delay
-                await asyncio.sleep(2.0)
+                # Wait long enough for speaker to fully drain so mic doesn't
+                # pick up our own TTS output.  The frontend also suppresses
+                # sendAudioChunk for 1.5 s after tts_end, but we add extra
+                # padding here to be safe against slower speakers / reverb.
+                await asyncio.sleep(2.5)
             self._tts_playing = False
 
     def trigger_barge_in(self) -> None:

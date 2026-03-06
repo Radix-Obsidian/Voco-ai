@@ -604,11 +604,13 @@ export function useVocoSocket() {
             console.log("[TTS] Bridge TTS active — speak or click orb to interrupt");
           } else if (msg.action === "tts_end") {
             setBridgeTtsActive(false);
-            // Delay mic resume so speaker tail-end audio doesn't trigger VAD
+            // Suppress mic immediately so speaker tail-end audio isn't captured
+            ttsActiveRef.current = true;
+            // Resume mic after speaker fully drains (prevents echo feedback)
             setTimeout(() => {
               ttsActiveRef.current = false;
               console.log("[TTS] Ended — mic resumed");
-            }, 1500);
+            }, 2000);
           }
         } else if (msg.type === "background_job_start") {
           // A new async tool was dispatched to the background queue.

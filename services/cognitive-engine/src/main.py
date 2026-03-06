@@ -1491,7 +1491,12 @@ async def voco_stream(websocket: WebSocket) -> None:
                     vad._bridge_barge_in_mode = True
                     await vad.process_chunk(chunk)
                     continue
-                vad._bridge_barge_in_mode = False
+                # Transition from bridge TTS → normal: reset VAD + buffer to flush echo
+                if vad._bridge_barge_in_mode:
+                    vad._bridge_barge_in_mode = False
+                    vad.reset()
+                    audio_buffer = bytearray()
+                    logger.debug("[Pipeline] Bridge TTS ended — VAD reset, buffer cleared")
                 # Skip VAD processing while normal TTS is active (prevents echo feedback)
                 if tts_active:
                     continue
