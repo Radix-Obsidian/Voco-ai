@@ -28,6 +28,7 @@ export interface VocoSettings {
   WAKE_WORD: boolean;
   STT_PROVIDER: "deepgram" | "whisper-local";
   WHISPER_MODEL: string;
+  GLOBAL_HOTKEY: string;
 }
 
 const STORAGE_KEY = "voco-settings";
@@ -38,6 +39,7 @@ const DEFAULT_SETTINGS: VocoSettings = {
   WAKE_WORD: true,
   STT_PROVIDER: "deepgram",
   WHISPER_MODEL: "base.en",
+  GLOBAL_HOTKEY: "Alt+Space",
 };
 
 function loadSettings(): VocoSettings {

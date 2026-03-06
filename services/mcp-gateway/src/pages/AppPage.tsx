@@ -172,6 +172,15 @@ const AppPage = () => {
     }
   }, [isConnected, session, sendAuthSync]);
 
+  // Sync global hotkey to Rust whenever the setting changes.
+  useEffect(() => {
+    if (settings.GLOBAL_HOTKEY) {
+      import("@tauri-apps/api/core")
+        .then(({ invoke }) => invoke("set_global_hotkey", { combo: settings.GLOBAL_HOTKEY }))
+        .catch(() => {});
+    }
+  }, [settings.GLOBAL_HOTKEY]);
+
   const handleSendText = useCallback(() => {
     if (!textInput.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(JSON.stringify({ type: "text_input", text: textInput.trim() }));
@@ -217,6 +226,8 @@ const AppPage = () => {
   stopCaptureRef.current = stopCapture;
   const bargeInBridgeRef = useRef(bargeInBridge);
   bargeInBridgeRef.current = bargeInBridge;
+  const bridgeTtsActiveRef = useRef(bridgeTtsActive);
+  bridgeTtsActiveRef.current = bridgeTtsActive;
 
   useEffect(() => {
     const unlisteners: Promise<() => void>[] = [];
@@ -243,6 +254,18 @@ const AppPage = () => {
         unlisteners.push(
           listen("voco://toggle-dictation-mode", () => {
             setDictationMode(prev => prev === "voco" ? "app" : "voco");
+          })
+        );
+        // Global hotkey (Alt+Space by default) — works even when Voco isn't focused
+        unlisteners.push(
+          listen("voco://global-toggle", () => {
+            if (bridgeTtsActiveRef.current) {
+              bargeInBridgeRef.current?.();
+            } else if (isCapturingRef.current) {
+              stopCaptureRef.current();
+            } else {
+              startCaptureRef.current();
+            }
           })
         );
       })

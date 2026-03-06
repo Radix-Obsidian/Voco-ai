@@ -21,6 +21,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AudioState::new())
         .manage(Arc::new(BackendState::new()))
         .setup(|app| {
@@ -86,6 +87,11 @@ pub fn run() {
                 orb.show().ok();
             }
 
+            // --- Register default global hotkey (Alt+Space) ---
+            if let Err(e) = commands::register_global_hotkey(app.handle(), "Alt+Space") {
+                eprintln!("[Voco] Failed to register default global hotkey: {e}");
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -109,6 +115,7 @@ pub fn run() {
             commands::show_main_window,
             commands::hide_main_window,
             commands::quit_app,
+            commands::set_global_hotkey,
             audio::play_native_audio,
             audio::halt_native_audio,
             screen::get_recent_frames,

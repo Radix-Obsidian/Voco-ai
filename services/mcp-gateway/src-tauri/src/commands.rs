@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+use tauri::Emitter;
 use tauri::Manager;
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_shell::ShellExt;
 
 // ---------------------------------------------------------------------------
@@ -113,6 +115,8 @@ pub struct VocoApiKeys {
     pub tts_voice: String,
     #[serde(rename = "GOOGLE_API_KEY", default)]
     pub google_api_key: String,
+    #[serde(rename = "GLOBAL_HOTKEY", default)]
+    pub global_hotkey: String,
 }
 
 /// Persist API keys to `{app_config_dir}/config.json`.
@@ -1059,4 +1063,114 @@ pub async fn validate_license(license_key: String) -> Result<LicenseResult, Stri
         .map(|s| s.to_string());
 
     Ok(LicenseResult { valid, tier, expiry })
+}
+
+// ---------------------------------------------------------------------------
+// Global hotkey — system-wide Ctrl+Space / Alt+Space toggle
+// ---------------------------------------------------------------------------
+
+/// Parse a combo string like "Alt+Space" or "Ctrl+Shift+Space" into a `Shortcut`.
+fn parse_shortcut(combo: &str) -> Result<Shortcut, String> {
+    let parts: Vec<&str> = combo.split('+').collect();
+    if parts.is_empty() {
+        return Err("Empty hotkey combo".into());
+    }
+
+    let mut modifiers = Modifiers::empty();
+    for part in &parts[..parts.len() - 1] {
+        match part.to_lowercase().as_str() {
+            "ctrl" | "control" => modifiers |= Modifiers::CONTROL,
+            "alt" => modifiers |= Modifiers::ALT,
+            "shift" => modifiers |= Modifiers::SHIFT,
+            "meta" | "super" | "win" => modifiers |= Modifiers::META,
+            other => return Err(format!("Unknown modifier: {other}")),
+        }
+    }
+
+    let key_str = parts.last().unwrap();
+    let code = match key_str.to_lowercase().as_str() {
+        // Letters
+        "a" => Code::KeyA, "b" => Code::KeyB, "c" => Code::KeyC, "d" => Code::KeyD,
+        "e" => Code::KeyE, "f" => Code::KeyF, "g" => Code::KeyG, "h" => Code::KeyH,
+        "i" => Code::KeyI, "j" => Code::KeyJ, "k" => Code::KeyK, "l" => Code::KeyL,
+        "m" => Code::KeyM, "n" => Code::KeyN, "o" => Code::KeyO, "p" => Code::KeyP,
+        "q" => Code::KeyQ, "r" => Code::KeyR, "s" => Code::KeyS, "t" => Code::KeyT,
+        "u" => Code::KeyU, "v" => Code::KeyV, "w" => Code::KeyW, "x" => Code::KeyX,
+        "y" => Code::KeyY, "z" => Code::KeyZ,
+        // Digits
+        "0" => Code::Digit0, "1" => Code::Digit1, "2" => Code::Digit2, "3" => Code::Digit3,
+        "4" => Code::Digit4, "5" => Code::Digit5, "6" => Code::Digit6, "7" => Code::Digit7,
+        "8" => Code::Digit8, "9" => Code::Digit9,
+        // Function keys
+        "f1" => Code::F1, "f2" => Code::F2, "f3" => Code::F3, "f4" => Code::F4,
+        "f5" => Code::F5, "f6" => Code::F6, "f7" => Code::F7, "f8" => Code::F8,
+        "f9" => Code::F9, "f10" => Code::F10, "f11" => Code::F11, "f12" => Code::F12,
+        "f13" => Code::F13, "f14" => Code::F14, "f15" => Code::F15, "f16" => Code::F16,
+        "f17" => Code::F17, "f18" => Code::F18, "f19" => Code::F19, "f20" => Code::F20,
+        "f21" => Code::F21, "f22" => Code::F22, "f23" => Code::F23, "f24" => Code::F24,
+        // Common keys
+        "space" => Code::Space,
+        "enter" | "return" => Code::Enter,
+        "tab" => Code::Tab,
+        "escape" | "esc" => Code::Escape,
+        "backspace" => Code::Backspace,
+        "delete" => Code::Delete,
+        "insert" => Code::Insert,
+        // Navigation
+        "arrowup" => Code::ArrowUp, "arrowdown" => Code::ArrowDown,
+        "arrowleft" => Code::ArrowLeft, "arrowright" => Code::ArrowRight,
+        "home" => Code::Home, "end" => Code::End,
+        "pageup" => Code::PageUp, "pagedown" => Code::PageDown,
+        // Punctuation & symbols
+        "`" => Code::Backquote, "-" => Code::Minus, "=" => Code::Equal,
+        "[" => Code::BracketLeft, "]" => Code::BracketRight, "\\" => Code::Backslash,
+        ";" => Code::Semicolon, "'" => Code::Quote,
+        "," => Code::Comma, "." => Code::Period, "/" => Code::Slash,
+        // Numpad
+        "num0" => Code::Numpad0, "num1" => Code::Numpad1, "num2" => Code::Numpad2,
+        "num3" => Code::Numpad3, "num4" => Code::Numpad4, "num5" => Code::Numpad5,
+        "num6" => Code::Numpad6, "num7" => Code::Numpad7, "num8" => Code::Numpad8,
+        "num9" => Code::Numpad9,
+        "numadd" => Code::NumpadAdd, "numsub" => Code::NumpadSubtract,
+        "nummul" => Code::NumpadMultiply, "numdiv" => Code::NumpadDivide,
+        "numdec" => Code::NumpadDecimal, "numenter" => Code::NumpadEnter,
+        // Lock & misc
+        "capslock" => Code::CapsLock, "numlock" => Code::NumLock,
+        "scrolllock" => Code::ScrollLock, "pause" => Code::Pause,
+        "printscreen" => Code::PrintScreen, "contextmenu" => Code::ContextMenu,
+        other => return Err(format!("Unknown key: {other}")),
+    };
+
+    let mods = if modifiers.is_empty() { None } else { Some(modifiers) };
+    Ok(Shortcut::new(mods, code))
+}
+
+/// Register a global hotkey that emits `voco://global-toggle` on press.
+/// Called from setup (default) and from the `set_global_hotkey` command.
+pub fn register_global_hotkey(handle: &AppHandle, combo: &str) -> Result<(), String> {
+    let shortcut = parse_shortcut(combo)?;
+
+    // Unregister all existing shortcuts first
+    handle
+        .global_shortcut()
+        .unregister_all()
+        .map_err(|e| format!("Failed to unregister shortcuts: {e}"))?;
+
+    let h = handle.clone();
+    handle
+        .global_shortcut()
+        .on_shortcut(shortcut, move |_app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                h.emit("voco://global-toggle", ()).ok();
+            }
+        })
+        .map_err(|e| format!("Failed to register hotkey '{combo}': {e}"))?;
+
+    Ok(())
+}
+
+/// Re-register the global hotkey at runtime (called from frontend Settings).
+#[tauri::command]
+pub async fn set_global_hotkey(app: AppHandle, combo: String) -> Result<(), String> {
+    register_global_hotkey(&app, &combo)
 }

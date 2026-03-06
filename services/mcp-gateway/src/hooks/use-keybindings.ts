@@ -36,6 +36,55 @@ function loadBindings(): KeybindingMap {
   }
 }
 
+/** Map DOM e.key / e.code to a stable key name that Rust parse_shortcut understands. */
+function normalizeKey(e: KeyboardEvent): string {
+  // Use e.code for reliable physical-key mapping, fall back to e.key
+  const code = e.code;
+  const key = e.key;
+
+  if (key === " ") return "Space";
+
+  // Arrow keys
+  if (code === "ArrowUp") return "ArrowUp";
+  if (code === "ArrowDown") return "ArrowDown";
+  if (code === "ArrowLeft") return "ArrowLeft";
+  if (code === "ArrowRight") return "ArrowRight";
+
+  // Navigation
+  if (code === "Home") return "Home";
+  if (code === "End") return "End";
+  if (code === "PageUp") return "PageUp";
+  if (code === "PageDown") return "PageDown";
+  if (code === "Insert") return "Insert";
+  if (code === "Delete") return "Delete";
+
+  // Punctuation / symbols — use code for layout-independent mapping
+  const codeMap: Record<string, string> = {
+    Backquote: "`", Minus: "-", Equal: "=",
+    BracketLeft: "[", BracketRight: "]", Backslash: "\\",
+    Semicolon: ";", Quote: "'", Comma: ",", Period: ".", Slash: "/",
+    NumpadAdd: "NumAdd", NumpadSubtract: "NumSub",
+    NumpadMultiply: "NumMul", NumpadDivide: "NumDiv",
+    NumpadDecimal: "NumDec", NumpadEnter: "NumEnter",
+    Numpad0: "Num0", Numpad1: "Num1", Numpad2: "Num2", Numpad3: "Num3",
+    Numpad4: "Num4", Numpad5: "Num5", Numpad6: "Num6", Numpad7: "Num7",
+    Numpad8: "Num8", Numpad9: "Num9",
+    PrintScreen: "PrintScreen", ScrollLock: "ScrollLock", Pause: "Pause",
+    ContextMenu: "ContextMenu", CapsLock: "CapsLock", NumLock: "NumLock",
+  };
+  if (code in codeMap) return codeMap[code];
+
+  // Function keys
+  const fnMatch = code.match(/^F(\d+)$/);
+  if (fnMatch) return `F${fnMatch[1]}`;
+
+  // Single printable char — uppercase
+  if (key.length === 1) return key.toUpperCase();
+
+  // Named keys (Enter, Tab, Escape, Backspace, etc.)
+  return key;
+}
+
 /** Convert a KeyboardEvent into a combo string like "Ctrl+K" or "Meta+Shift+?" */
 export function eventToCombo(e: KeyboardEvent): string {
   const parts: string[] = [];
@@ -47,12 +96,7 @@ export function eventToCombo(e: KeyboardEvent): string {
   // Ignore bare modifier presses
   if (["Control", "Meta", "Alt", "Shift"].includes(e.key)) return "";
 
-  // Normalize the key display
-  let key = e.key;
-  if (key === " ") key = "Space";
-  else if (key.length === 1) key = key.toUpperCase();
-
-  parts.push(key);
+  parts.push(normalizeKey(e));
   return parts.join("+");
 }
 

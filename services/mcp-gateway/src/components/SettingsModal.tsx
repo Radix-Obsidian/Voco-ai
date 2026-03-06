@@ -107,8 +107,8 @@ function ShortcutRecorder({
   onRecord: (action: KeybindingAction, combo: string) => void;
   onClear: (action: KeybindingAction) => void;
 }) {
-  const [recording, setRecording] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [listening, setListening] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -117,51 +117,78 @@ function ShortcutRecorder({
       const parsed = eventToCombo(e.nativeEvent);
       if (!parsed) return;
       onRecord(action, parsed);
-      setRecording(false);
+      setListening(false);
     },
     [action, onRecord]
   );
-
-  useEffect(() => {
-    if (recording && inputRef.current) inputRef.current.focus();
-  }, [recording]);
 
   return (
     <div className="flex items-center justify-between py-2">
       <span className="text-sm text-zinc-300">{KEYBINDING_LABELS[action]}</span>
       <div className="flex items-center gap-2">
-        {recording ? (
-          <input
-            ref={inputRef}
-            onKeyDown={handleKeyDown}
-            onBlur={() => setRecording(false)}
-            readOnly
-            placeholder="Press keys..."
-            className="w-28 h-7 px-2 text-xs text-center rounded bg-zinc-800 border border-voco-cyan/50 text-zinc-200 placeholder:text-zinc-500 focus:outline-none"
-          />
-        ) : (
-          <kbd className="inline-flex items-center justify-center min-w-[70px] h-7 px-2 rounded bg-zinc-800 text-[11px] text-zinc-400 font-mono border border-zinc-700">
-            {formatCombo(combo)}
-          </kbd>
-        )}
         <button
+          ref={ref}
           type="button"
-          onClick={() => setRecording(true)}
-          className="px-2 py-1 text-[10px] rounded bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 border border-zinc-700 transition-colors"
+          onClick={() => setListening(true)}
+          onKeyDown={listening ? handleKeyDown : undefined}
+          onBlur={() => setListening(false)}
+          className={`inline-flex items-center justify-center min-w-[90px] h-7 px-2 rounded text-[11px] font-mono border transition-colors cursor-pointer ${
+            listening
+              ? "bg-zinc-800 border-voco-cyan/50 text-voco-cyan animate-pulse"
+              : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-300"
+          }`}
         >
-          {recording ? "Listening…" : "Record"}
+          {listening ? "Press keys..." : formatCombo(combo)}
         </button>
-        {combo && (
+        {combo && !listening && (
           <button
             type="button"
             onClick={() => onClear(action)}
-            className="px-2 py-1 text-[10px] rounded text-zinc-500 hover:text-red-400 transition-colors"
+            className="px-1.5 py-0.5 text-[10px] rounded text-zinc-500 hover:text-red-400 transition-colors"
           >
             Clear
           </button>
         )}
       </div>
     </div>
+  );
+}
+
+function GlobalHotkeyRecorder({
+  combo,
+  onRecord,
+}: {
+  combo: string;
+  onRecord: (combo: string) => void;
+}) {
+  const [listening, setListening] = useState(false);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const parsed = eventToCombo(e.nativeEvent);
+      if (!parsed) return;
+      onRecord(parsed);
+      setListening(false);
+    },
+    [onRecord]
+  );
+
+  return (
+    <button
+      type="button"
+      onClick={() => setListening(true)}
+      onKeyDown={listening ? handleKeyDown : undefined}
+      onBlur={() => setListening(false)}
+      className={`inline-flex items-center justify-center min-w-[90px] h-7 px-3 rounded text-[11px] font-mono border transition-colors cursor-pointer ${
+        listening
+          ? "bg-zinc-800 border-voco-cyan/50 text-voco-cyan animate-pulse"
+          : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-300"
+      }`}
+    >
+      {listening ? "Press keys..." : formatCombo(combo)}
+    </button>
   );
 }
 
@@ -193,7 +220,7 @@ export function SettingsModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-zinc-950 border-zinc-800 text-zinc-100 sm:max-w-lg">
+      <DialogContent className="bg-zinc-950 border-zinc-800 text-zinc-100 sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-voco-cyan">
             <Settings className="h-5 w-5" />
@@ -324,6 +351,20 @@ export function SettingsModal({
           </div>
         </div>
 
+          {/* Global Hotkey */}
+          <div className="pt-2 border-t border-zinc-800 space-y-2">
+            <Label className="text-sm font-medium text-zinc-300">
+              Global Hotkey
+            </Label>
+            <p className="text-xs text-zinc-500">
+              System-wide shortcut to wake/pause mic or barge-in during TTS. Works even when Voco isn't focused.
+            </p>
+            <GlobalHotkeyRecorder
+              combo={settings.GLOBAL_HOTKEY ?? "Alt+Space"}
+              onRecord={(combo) => onUpdate("GLOBAL_HOTKEY", combo)}
+            />
+          </div>
+
           {/* Keyboard Shortcuts */}
           <div className="pt-2 border-t border-zinc-800 space-y-2">
             <div className="flex items-center justify-between">
@@ -342,7 +383,7 @@ export function SettingsModal({
               )}
             </div>
             <p className="text-xs text-zinc-500">
-              Click Record, then press your desired key combo. All shortcuts start unbound to avoid clashes.
+              Click a shortcut, then press your desired key combo. All shortcuts start unbound to avoid clashes.
             </p>
             <div className="divide-y divide-zinc-800/50">
               {(Object.keys(KEYBINDING_LABELS) as KeybindingAction[]).map((action) => (
