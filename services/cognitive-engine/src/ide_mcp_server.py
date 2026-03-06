@@ -13,10 +13,13 @@ Available tools:
   voco_search_web        — Tavily web search
   voco_read_github_issue — Read a GitHub issue
   voco_ask               — Full LangGraph reasoning (requires ANTHROPIC_API_KEY or LiteLLM gateway)
+  voco_voice_input       — Activate mic, return STT transcript (requires Voco desktop app)
+  voco_speak             — Text-to-speech via Cartesia (requires Voco desktop app)
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import uuid
@@ -104,6 +107,44 @@ async def _list_tools() -> list[Tool]:
                 "required": ["prompt"],
             },
         ),
+        Tool(
+            name="voco_voice_input",
+            description=(
+                "Activate the microphone in the Voco desktop app and listen for "
+                "the user's voice. Returns the transcribed text. The Voco app must "
+                "be running. Use this instead of asking the user to type."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Optional prompt shown to the user while listening.",
+                    },
+                    "timeout": {
+                        "type": "number",
+                        "description": "Max seconds to wait for speech (default 30).",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="voco_speak",
+            description=(
+                "Speak text aloud through the Voco desktop app using text-to-speech. "
+                "The Voco app must be running. Use for important audible responses."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "The text to speak aloud.",
+                    }
+                },
+                "required": ["text"],
+            },
+        ),
     ]
 
 
@@ -180,6 +221,44 @@ async def _call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         except Exception as exc:
             logger.error("[IDE MCP] voco_ask error: %s", exc, exc_info=True)
             return [TextContent(type="text", text=f"Error: {exc}")]
+
+    # ---- voco_voice_input ----
+    if name == "voco_voice_input":
+        try:
+            from src.voice_bridge import voice_bridge
+
+            prompt = arguments.get("prompt", "")
+            timeout = float(arguments.get("timeout", 30))
+            transcript = await voice_bridge.request_voice_input(
+                prompt=prompt, timeout=timeout
+            )
+            return [TextContent(type="text", text=transcript)]
+        except asyncio.TimeoutError:
+            return [TextContent(
+                type="text",
+                text="No speech detected within the timeout period. Try again.",
+            )]
+        except RuntimeError as exc:
+            return [TextContent(type="text", text=f"Voice input error: {exc}")]
+        except Exception as exc:
+            logger.warning("[IDE MCP] voco_voice_input error: %s", exc)
+            return [TextContent(type="text", text=f"Voice input error: {exc}")]
+
+    # ---- voco_speak ----
+    if name == "voco_speak":
+        try:
+            from src.voice_bridge import voice_bridge
+
+            text = arguments.get("text", "")
+            if not text:
+                return [TextContent(type="text", text="Error: 'text' is required.")]
+            await voice_bridge.speak(text)
+            return [TextContent(type="text", text="Spoken successfully.")]
+        except RuntimeError as exc:
+            return [TextContent(type="text", text=f"Speak error: {exc}")]
+        except Exception as exc:
+            logger.warning("[IDE MCP] voco_speak error: %s", exc)
+            return [TextContent(type="text", text=f"Speak error: {exc}")]
 
     return [TextContent(type="text", text=f"Unknown tool: '{name}'")]
 

@@ -364,6 +364,11 @@ pub fn start_services(app: AppHandle, state: Arc<BackendState>) {
     std::thread::spawn(move || {
         poll_health_blocking(&state_clone, 60);
         let _ = app_clone.emit("backend-ready", ());
+
+        // After engine is healthy, try to register with Claude Code (non-fatal)
+        if state_clone.status.lock().unwrap().engine_ready {
+            register_with_claude_code();
+        }
     });
 }
 
@@ -578,6 +583,109 @@ fn check_health_sync(url: &str) -> bool {
             resp.contains("200 OK") || resp.contains("200")
         }
         _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code MCP auto-registration
+// ---------------------------------------------------------------------------
+
+/// Attempt to register Voco as an MCP server with Claude Code.
+/// All failures are non-fatal — logs a warning and moves on.
+fn register_with_claude_code() {
+    // 1. Check if `claude` CLI exists
+    let claude_path = match which_executable("claude") {
+        Some(p) => p,
+        None => {
+            eprintln!("[ClaudeCode] `claude` CLI not found — skipping MCP registration.");
+            return;
+        }
+    };
+
+    // 2. Check if voco-voice is already registered in ~/.claude.json
+    let home = match std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+    {
+        Ok(h) => std::path::PathBuf::from(h),
+        Err(_) => {
+            eprintln!("[ClaudeCode] Cannot determine home directory.");
+            return;
+        }
+    };
+
+    let claude_json = home.join(".claude.json");
+    if claude_json.exists() {
+        if let Ok(content) = std::fs::read_to_string(&claude_json) {
+            if content.contains("voco-voice") {
+                eprintln!("[ClaudeCode] voco-voice already registered — skipping.");
+                // Still ensure the slash command exists
+                drop_voice_slash_command(&home);
+                return;
+            }
+        }
+    }
+
+    // 3. Register: claude mcp add --transport sse voco-voice http://localhost:8001/mcp --scope user
+    eprintln!("[ClaudeCode] Registering voco-voice MCP server...");
+    let result = Command::new(&claude_path)
+        .args([
+            "mcp", "add",
+            "--transport", "sse",
+            "voco-voice",
+            "http://localhost:8001/mcp",
+            "--scope", "user",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output();
+
+    match result {
+        Ok(output) if output.status.success() => {
+            eprintln!("[ClaudeCode] voco-voice MCP server registered successfully.");
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!(
+                "[ClaudeCode] MCP registration failed (exit {}): {}",
+                output.status.code().unwrap_or(-1),
+                stderr.trim()
+            );
+        }
+        Err(e) => {
+            eprintln!("[ClaudeCode] Failed to run `claude mcp add`: {}", e);
+        }
+    }
+
+    // 4. Drop the /voice slash command
+    drop_voice_slash_command(&home);
+}
+
+/// Create ~/.claude/skills/voco/SKILL.md skill for Claude Code.
+fn drop_voice_slash_command(home: &std::path::Path) {
+    let skill_dir = home.join(".claude").join("skills").join("voco");
+    if let Err(e) = std::fs::create_dir_all(&skill_dir) {
+        eprintln!("[ClaudeCode] Cannot create skills dir: {}", e);
+        return;
+    }
+
+    let skill_md = skill_dir.join("SKILL.md");
+    if skill_md.exists() {
+        return; // Don't overwrite user customizations
+    }
+
+    let content = "---\n\
+name: voco\n\
+description: Voice I/O — listen for voice commands and speak responses via the Voco desktop app\n\
+---\n\
+\n\
+Use the voco_voice_input tool to listen for the user's voice command.\n\
+Process the transcript normally. Continue calling voco_voice_input for\n\
+follow-up input. Use voco_speak for important audible responses.\n";
+
+    match std::fs::write(&skill_md, content) {
+        Ok(()) => eprintln!("[ClaudeCode] /voco skill created at {}", skill_md.display()),
+        Err(e) => eprintln!("[ClaudeCode] Failed to write SKILL.md: {}", e),
     }
 }
 

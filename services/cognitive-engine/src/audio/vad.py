@@ -197,6 +197,12 @@ class VocoVADStreamer:
         self._barge_in_fired: bool = False
         self._suppressed: bool = False
 
+        # Bridge barge-in mode: stricter detection to avoid echo false triggers
+        self._bridge_barge_in_mode: bool = False
+        self._bridge_speech_threshold: float = 0.75  # Higher VAD confidence required
+        self._bridge_barge_in_frames: int = 5  # ~160ms of sustained speech needed
+        self._bridge_rms_threshold: float = 0.04  # Min RMS energy (echo is typically <0.02)
+
         # Async callbacks — wired by the WebSocket endpoint
         self.on_barge_in: Callable[[], Awaitable[None]] | None = None
         self.on_turn_end: Callable[[], Awaitable[None]] | None = None
@@ -230,11 +236,23 @@ class VocoVADStreamer:
             # ONNX inference (no torch tensor needed)
             prob: float = self._model(samples, self.SAMPLE_RATE)
 
-            if prob >= self._speech_threshold:
+            # In bridge barge-in mode, use stricter thresholds + RMS energy gate
+            # to distinguish real speech from TTS echo through speakers
+            if self._bridge_barge_in_mode:
+                rms = float(np.sqrt(np.mean(samples ** 2)))
+                speech_thresh = self._bridge_speech_threshold
+                barge_frames = self._bridge_barge_in_frames
+                energy_ok = rms >= self._bridge_rms_threshold
+            else:
+                speech_thresh = self._speech_threshold
+                barge_frames = self._barge_in_frames
+                energy_ok = True  # No energy gate in normal mode
+
+            if prob >= speech_thresh and energy_ok:
                 self._speech_frames += 1
                 self._silence_frames = 0
 
-                if not self._is_speaking and self._speech_frames >= self._barge_in_frames:
+                if not self._is_speaking and self._speech_frames >= barge_frames:
                     self._is_speaking = True
                     if not self._barge_in_fired and self.on_barge_in is not None:
                         self._barge_in_fired = True

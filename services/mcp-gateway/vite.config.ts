@@ -17,4 +17,12 @@ export default defineConfig({
     },
     dedupe: ["react", "react-dom", "react/jsx-runtime"],
   },
+  build: {
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        orb: path.resolve(__dirname, "orb.html"),
+      },
+    },
+  },
 });
