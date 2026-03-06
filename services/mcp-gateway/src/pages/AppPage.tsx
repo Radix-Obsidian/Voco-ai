@@ -46,9 +46,15 @@ const AppPage = () => {
     setSandboxUrl,
     sendAuthSync,
     liveTranscript,
+    interimTranscript,
+    dictationMode,
+    setDictationMode,
   } = source;
   const cancelBackgroundJob = IS_DEMO ? undefined : liveSocket.cancelBackgroundJob;
   const claudeCodeDelegation = IS_DEMO ? undefined : liveSocket.claudeCodeDelegation;
+  const voiceInputRequested = IS_DEMO ? false : liveSocket.voiceInputRequested;
+  const bridgeTtsActive = IS_DEMO ? false : liveSocket.bridgeTtsActive;
+  const bargeInBridge = IS_DEMO ? undefined : liveSocket.bargeInBridge;
 
   const { settings, updateSetting, hasRequiredKeys, pushToBackend, saveSettings } = useSettings();
   const { session, isFounder, signOut, userTier } = useAuth();
@@ -123,6 +129,13 @@ const AppPage = () => {
     }
   }, [mode, isConnected, hasRequiredKeys]);
 
+  // Voice Bridge: auto-start mic when Claude Code requests voice input
+  useEffect(() => {
+    if (voiceInputRequested && isConnected && !isCapturing) {
+      startCapture();
+    }
+  }, [voiceInputRequested, isConnected, isCapturing, startCapture]);
+
   const handleCloseTerminal = () => setTerminalOutput(null);
 
   // Global keyboard shortcuts — driven by user-configurable keybindings
@@ -178,6 +191,67 @@ const AppPage = () => {
 
   const isListening = isCapturing;
 
+  // --- Orb inter-window event bridge ---
+  // Emit state to the floating orb window whenever relevant values change
+  useEffect(() => {
+    import("@tauri-apps/api/event")
+      .then(({ emit }) => {
+        emit("voco://orb-state", {
+          isConnected,
+          isListening: isCapturing,
+          bargeInActive,
+          bridgeTtsActive,
+          liveTranscript: interimTranscript || liveTranscript || "",
+          dictationMode,
+        });
+      })
+      .catch(() => {});
+  }, [isConnected, isCapturing, bargeInActive, bridgeTtsActive, liveTranscript, interimTranscript, dictationMode]);
+
+  // Listen for commands from the orb window (refs avoid re-subscribing)
+  const isCapturingRef = useRef(isCapturing);
+  isCapturingRef.current = isCapturing;
+  const startCaptureRef = useRef(startCapture);
+  startCaptureRef.current = startCapture;
+  const stopCaptureRef = useRef(stopCapture);
+  stopCaptureRef.current = stopCapture;
+  const bargeInBridgeRef = useRef(bargeInBridge);
+  bargeInBridgeRef.current = bargeInBridge;
+
+  useEffect(() => {
+    const unlisteners: Promise<() => void>[] = [];
+    import("@tauri-apps/api/event")
+      .then(({ listen }) => {
+        unlisteners.push(
+          listen("voco://orb-toggle-mic", () => {
+            if (isCapturingRef.current) stopCaptureRef.current();
+            else startCaptureRef.current();
+          })
+        );
+        unlisteners.push(
+          listen("voco://orb-barge-in", () => {
+            bargeInBridgeRef.current?.();
+          })
+        );
+        unlisteners.push(
+          listen("voco://show-main", () => {
+            import("@tauri-apps/api/core").then(({ invoke }) => {
+              invoke("show_main_window");
+            });
+          })
+        );
+        unlisteners.push(
+          listen("voco://toggle-dictation-mode", () => {
+            setDictationMode(prev => prev === "voco" ? "app" : "voco");
+          })
+        );
+      })
+      .catch(() => {});
+    return () => {
+      unlisteners.forEach((p) => p.then((fn) => fn()));
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* ====== Voice / Text panel (shared between both layout modes) ====== */
   const voiceTextPanel = (
     <main
@@ -198,6 +272,10 @@ const AppPage = () => {
           {/* The Orb */}
           <button
             onClick={() => {
+              if (bridgeTtsActive && bargeInBridge) {
+                bargeInBridge();
+                return;
+              }
               if (isCapturing) stopCapture();
               else startCapture();
             }}
@@ -211,6 +289,7 @@ const AppPage = () => {
                 : "animate-orb-pulse hover:shadow-voco-glow"
               }
               ${bargeInActive ? "!shadow-[0_0_40px_rgba(239,68,68,0.5)]" : ""}
+              ${bridgeTtsActive ? "!shadow-[0_0_30px_rgba(59,130,246,0.5)] animate-pulse" : ""}
               disabled:opacity-30 disabled:cursor-not-allowed
             `}
           >
@@ -234,10 +313,10 @@ const AppPage = () => {
             />
           </button>
 
-          {/* Live transcript */}
-          {liveTranscript && isListening && (
-            <p className="text-sm text-zinc-300 max-w-sm text-center italic animate-pulse">
-              "{liveTranscript}"
+          {/* Live interim transcript — shows word-by-word as user speaks */}
+          {(interimTranscript || liveTranscript) && isListening && (
+            <p className="text-sm text-zinc-300 max-w-sm text-center italic opacity-80">
+              "{interimTranscript || liveTranscript}"
             </p>
           )}
 
@@ -245,24 +324,41 @@ const AppPage = () => {
           <p className="text-sm text-zinc-500">
             {!isConnected
               ? "Connecting to Voco..."
+              : bridgeTtsActive
+                ? "Speaking... talk or tap orb to interrupt"
               : isListening
                 ? bargeInActive
                   ? "Listening for your interruption..."
-                  : "Listening..."
+                  : settings.WAKE_WORD
+                    ? 'Say "Hey Voco" to start...'
+                    : "Listening..."
                 : "Tap to start speaking"
             }
           </p>
 
-          {/* Mode switch */}
-          <button
-            onClick={() => setMode("type")}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs text-zinc-500 hover:text-zinc-300 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.04] transition-all"
-          >
-            Type instead
-            {bindings.toggle_mode && (
-              <kbd className="ml-1.5 px-1.5 py-0.5 rounded bg-white/[0.06] text-[10px] text-zinc-600 font-mono">{formatCombo(bindings.toggle_mode)}</kbd>
-            )}
-          </button>
+          {/* Dictation mode toggle + mode switch */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setDictationMode(prev => prev === "voco" ? "app" : "voco")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs border transition-all ${
+                dictationMode === "app"
+                  ? "text-blue-400 bg-blue-500/10 border-blue-500/20 hover:bg-blue-500/15"
+                  : "text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/15"
+              }`}
+            >
+              <div className={`w-1.5 h-1.5 rounded-full ${dictationMode === "app" ? "bg-blue-400" : "bg-emerald-400"}`} />
+              {dictationMode === "app" ? "Dictate to App" : "Dictate to Voco"}
+            </button>
+            <button
+              onClick={() => setMode("type")}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs text-zinc-500 hover:text-zinc-300 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.04] transition-all"
+            >
+              Type instead
+              {bindings.toggle_mode && (
+                <kbd className="ml-1.5 px-1.5 py-0.5 rounded bg-white/[0.06] text-[10px] text-zinc-600 font-mono">{formatCombo(bindings.toggle_mode)}</kbd>
+              )}
+            </button>
+          </div>
         </div>
       ) : (
         /* ====== TEXT MODE ====== */

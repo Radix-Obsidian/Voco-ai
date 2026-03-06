@@ -92,8 +92,24 @@ export function useVocoSocket() {
   const [sandboxUrl, setSandboxUrl] = useState<string | null>(null);
   const [sandboxRefreshKey, setSandboxRefreshKey] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState("");
+  const [interimTranscript, setInterimTranscript] = useState("");
+  const [dictationMode, _setDictationMode] = useState<"voco" | "app">("voco");
+  const dictationModeRef = useRef<"voco" | "app">("voco");
+  const setDictationMode = useCallback((val: "voco" | "app" | ((prev: "voco" | "app") => "voco" | "app")) => {
+    _setDictationMode((prev) => {
+      const next = typeof val === "function" ? val(prev) : val;
+      dictationModeRef.current = next;
+      return next;
+    });
+  }, []);
+  const prevInterimRef = useRef("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [lastError, setLastError] = useState<{ code: string; message: string; recoverable: boolean } | null>(null);
+  // Voice Bridge: MCP client (e.g. Claude Code) requesting mic activation
+  const [voiceInputRequested, setVoiceInputRequested] = useState(false);
+  const [voiceInputPrompt, setVoiceInputPrompt] = useState("");
+  // True when voice bridge TTS is actively playing (for barge-in UI)
+  const [bridgeTtsActive, setBridgeTtsActive] = useState(false);
   // Client-side turn counting for metering validation (GAP #12)
   const [turnCount, setTurnCount] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
@@ -461,6 +477,16 @@ export function useVocoSocket() {
     }
   }, []);
 
+  const bargeInBridge = useCallback(() => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "bridge_barge_in" }));
+      haltNativeAudio();
+      setBridgeTtsActive(false);
+      console.log("[VocoSocket] Bridge barge-in sent");
+    }
+  }, [haltNativeAudio]);
+
   const cancelBackgroundJob = useCallback((jobId: string) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -527,12 +553,32 @@ export function useVocoSocket() {
           setLastError(errPayload);
           toast({ title: errPayload.code, description: errPayload.message, variant: "destructive" });
           console.error(`[VocoSocket] Error: ${errPayload.code} — ${errPayload.message}`);
+        } else if (msg.type === "interim_transcript") {
+          const text = msg.text ?? "";
+          setInterimTranscript(text);
+          // App dictation mode: type into focused OS field via enigo
+          if (dictationModeRef.current === "app" && text && isTauri()) {
+            // Debounce: only invoke if text actually changed
+            const prev = prevInterimRef.current;
+            if (text !== prev) {
+              tauriInvoke("type_diff", { previous: prev, current: text }).catch((err) => {
+                console.warn("[Dictation] type_diff failed:", err);
+              });
+              prevInterimRef.current = text;
+            }
+          }
         } else if (msg.type === "transcript") {
           setLiveTranscript(msg.text ?? "");
+          setInterimTranscript("");
+          prevInterimRef.current = "";
+          // Clear voice bridge request when transcript arrives
+          setVoiceInputRequested(false);
+          setVoiceInputPrompt("");
         } else if (msg.type === "control") {
           if (msg.action === "halt_audio_playback") {
             haltNativeAudio();
             setBargeInActive(true);
+            setBridgeTtsActive(false);
             console.log("[Barge-in] Halting native audio!");
           } else if (msg.action === "turn_ended") {
             setBargeInActive(false);
@@ -549,7 +595,15 @@ export function useVocoSocket() {
           } else if (msg.action === "tts_start") {
             ttsActiveRef.current = true;
             console.log("[TTS] Active — mic suppressed to prevent echo");
+          } else if (msg.action === "tts_start_bargeable") {
+            // Voice bridge TTS — keep mic hot so VAD can detect barge-in
+            // Do NOT set ttsActiveRef so sendAudioChunk keeps flowing
+            console.log("[TTS] Active (bargeable) — mic stays hot for voice barge-in");
+          } else if (msg.action === "bridge_tts_active") {
+            setBridgeTtsActive(true);
+            console.log("[TTS] Bridge TTS active — speak or click orb to interrupt");
           } else if (msg.action === "tts_end") {
+            setBridgeTtsActive(false);
             // Delay mic resume so speaker tail-end audio doesn't trigger VAD
             setTimeout(() => {
               ttsActiveRef.current = false;
@@ -684,6 +738,13 @@ export function useVocoSocket() {
           // Phase 5: Live Sandbox — iterative update (URL stays the same)
           setSandboxRefreshKey((prev) => prev + 1);
           console.log("[Sandbox] Preview refreshed.");
+        } else if (msg.type === "voice_input_request") {
+          // Voice Bridge: MCP client wants mic activation for voice input
+          const prompt = (msg.prompt as string) || "Listening for voice input...";
+          setVoiceInputRequested(true);
+          setVoiceInputPrompt(prompt);
+          toast({ title: "Claude Code is listening...", description: prompt });
+          console.log("[VoiceBridge] Voice input requested:", prompt);
         } else if (msg.type === "scan_security_request") {
           // Phase 4: Voco Auto-Sec — run local security scan via Rust and send findings back
           const requestId: string = msg.id ?? "";
@@ -804,10 +865,17 @@ export function useVocoSocket() {
     sandboxRefreshKey,
     setSandboxUrl,
     liveTranscript,
+    interimTranscript,
+    dictationMode,
+    setDictationMode,
     sessionId,
     lastError,
     isReconnecting,
     turnCount,
     claudeCodeDelegation,
+    voiceInputRequested,
+    voiceInputPrompt,
+    bridgeTtsActive,
+    bargeInBridge,
   };
 }

@@ -37,7 +37,7 @@ from src.graph.background_worker import BackgroundJobQueue
 from src.ide_mcp_server import attach_ide_mcp_routes
 
 from src.debug import debug_logger
-from src.audio.stt import DeepgramSTT
+from src.audio.stt import DeepgramSTT, DeepgramStreamingSession, WhisperLocalSession
 from src.audio.tts import CartesiaTTS
 from src.audio.vad import VocoVADStreamer, load_silero_model
 from src.graph.router import compile_graph
@@ -376,7 +376,55 @@ async def voco_stream(websocket: WebSocket) -> None:
     stt = DeepgramSTT(api_key=os.environ.get("DEEPGRAM_API_KEY", ""))
     tts = CartesiaTTS(api_key=os.environ.get("CARTESIA_API_KEY", ""))
 
+    # Register with the voice bridge so MCP clients (Claude Code) can use mic/TTS
+    from src.voice_bridge import voice_bridge
+    voice_bridge.register_ws(websocket, stt=stt, tts=tts)
+
     audio_buffer: bytearray = bytearray()
+    streaming_stt: DeepgramStreamingSession | None = None
+    _interim_relay_task: asyncio.Task | None = None
+    _speech_active = False  # True once VAD detects speech onset
+
+    async def _relay_interims() -> None:
+        """Background task: read interim transcripts from Deepgram, send to frontend."""
+        nonlocal streaming_stt
+        try:
+            while streaming_stt and not streaming_stt._closed:
+                text = await streaming_stt.interim_queue.get()
+                if text is None:
+                    break
+                await websocket.send_json({"type": "interim_transcript", "text": text})
+        except Exception as exc:
+            logger.debug("[StreamSTT] Interim relay stopped: %s", exc)
+
+    async def _start_streaming_stt() -> None:
+        """Start a new streaming STT session for real-time interim transcripts.
+
+        Picks provider based on STT_PROVIDER env var:
+        - "deepgram" (default): Cloud streaming via Deepgram Nova-2
+        - "whisper-local": Fully offline via faster-whisper (CTranslate2)
+        """
+        nonlocal streaming_stt, _interim_relay_task
+        provider = os.environ.get("STT_PROVIDER", "deepgram").lower()
+
+        try:
+            if provider == "whisper-local":
+                model_size = os.environ.get("WHISPER_MODEL", "base.en")
+                streaming_stt = WhisperLocalSession(model_size=model_size)
+                await streaming_stt.start()
+                logger.info("[StreamSTT] Using local Whisper (%s)", model_size)
+            else:
+                dg_key = os.environ.get("DEEPGRAM_API_KEY", "")
+                if not dg_key:
+                    return
+                streaming_stt = DeepgramStreamingSession(api_key=dg_key)
+                await streaming_stt.start()
+                logger.info("[StreamSTT] Using Deepgram cloud")
+            _interim_relay_task = asyncio.create_task(_relay_interims())
+        except Exception as exc:
+            logger.warning("[StreamSTT] Failed to start: %s", exc)
+            streaming_stt = None
+
     thread_id = _new_thread_id()
     config = {"configurable": {"thread_id": thread_id}}
     logger.info("[Session] New thread: %s", thread_id)
@@ -386,6 +434,11 @@ async def voco_stream(websocket: WebSocket) -> None:
     _session_checkpointer = await get_checkpointer(thread_id)
     graph = compile_graph(checkpointer=_session_checkpointer)
     tts_active = False  # Track if TTS is currently playing
+
+    # Wake word gate — only process speech that starts with "voco" / "hey voco" etc.
+    # Toggled via settings; defaults to ON so ambient speech is ignored.
+    _WAKE_WORDS = ("hey voco", "a voco", "voco", "hey boco", "boco", "hey poco", "poco")
+    _wake_word_required = True  # Can be toggled via update_env / settings
 
     # Observability: send session_id to frontend so logs can be correlated
     tracer = get_tracer()
@@ -428,10 +481,22 @@ async def voco_stream(websocket: WebSocket) -> None:
             logger.debug("[RPC] Cleaned up %d stale futures", len(stale))
 
     async def _on_barge_in() -> None:
-        """Signal Tauri to halt TTS playback immediately (barge-in)."""
-        nonlocal tts_active
-        if tts_active:  # Only trigger barge-in when TTS is actually playing
+        """Signal Tauri to halt TTS playback immediately (barge-in).
+
+        Also starts streaming STT session on speech onset for real-time transcripts.
+        """
+        nonlocal tts_active, _speech_active
+        if voice_bridge._tts_playing:
+            voice_bridge.trigger_barge_in()
             await websocket.send_json({"type": "control", "action": "halt_audio_playback"})
+            logger.info("[Barge-in] Voice bridge TTS interrupted by user speech")
+        elif tts_active:
+            await websocket.send_json({"type": "control", "action": "halt_audio_playback"})
+
+        # Start streaming STT on speech onset (first barge-in/speech detection)
+        if not _speech_active and not streaming_stt:
+            _speech_active = True
+            await _start_streaming_stt()
 
     _last_detected_domain = "general"
 
@@ -482,12 +547,13 @@ async def voco_stream(websocket: WebSocket) -> None:
         straight into LangGraph.  Billing still fires at the end so typed turns
         are metered identically to spoken turns.
         """
-        nonlocal audio_buffer, tts_active, _turn_in_progress
+        nonlocal audio_buffer, tts_active, _turn_in_progress, streaming_stt, _speech_active
 
         if _turn_in_progress:
             logger.warning("[Pipeline] Turn already in progress — ignoring duplicate trigger.")
             return
         _turn_in_progress = True
+        _speech_active = False  # Reset for next turn
 
         _session_metrics["turn_count"] += 1
         await websocket.send_json({"type": "control", "action": "turn_ended", "turn_count": _session_metrics["turn_count"]})
@@ -497,22 +563,54 @@ async def voco_stream(websocket: WebSocket) -> None:
             transcript = text_override
             logger.info("[Pipeline] Text input: %.120s", transcript)
             await websocket.send_json({"type": "transcript", "text": transcript})
+            # Clean up streaming session if any
+            if streaming_stt:
+                await streaming_stt.stop()
+                streaming_stt = None
+            await websocket.send_json({"type": "interim_transcript", "text": ""})
         else:
-            # --- Voice path: transcribe buffered audio via Deepgram ---
+            # --- Voice path: transcribe via streaming STT or fallback ---
             if not audio_buffer:
                 logger.warning("[Pipeline] Turn ended with empty audio buffer — skipping.")
+                if streaming_stt:
+                    await streaming_stt.stop()
+                    streaming_stt = None
                 return
 
             # Require a minimum buffer size to avoid transcribing noise/clicks
             if len(audio_buffer) < AUDIO_MIN_BUFFER_SIZE:
                 logger.info("[Pipeline] Audio buffer too small (%d bytes) — likely noise, skipping.", len(audio_buffer))
                 audio_buffer = bytearray()
+                if streaming_stt:
+                    await streaming_stt.stop()
+                    streaming_stt = None
+                await websocket.send_json({"type": "interim_transcript", "text": ""})
                 return
 
             try:
-                transcript = await stt.transcribe_once(bytes(audio_buffer))
-            except ValueError as stt_err:
+                if streaming_stt:
+                    # Use streaming session's accumulated final transcript
+                    transcript = await streaming_stt.finish()
+                    streaming_stt = None
+                    # Clear interim display
+                    await websocket.send_json({"type": "interim_transcript", "text": ""})
+                else:
+                    # Fallback: batch transcription
+                    provider = os.environ.get("STT_PROVIDER", "deepgram").lower()
+                    if provider == "whisper-local":
+                        model_size = os.environ.get("WHISPER_MODEL", "base.en")
+                        local = WhisperLocalSession(model_size=model_size)
+                        await local.start()
+                        await local.feed(bytes(audio_buffer))
+                        transcript = await local.finish()
+                    else:
+                        transcript = await stt.transcribe_once(bytes(audio_buffer))
+            except (ValueError, Exception) as stt_err:
                 audio_buffer = bytearray()
+                if streaming_stt:
+                    await streaming_stt.stop()
+                    streaming_stt = None
+                await websocket.send_json({"type": "interim_transcript", "text": ""})
                 await send_error(websocket, VocoError(
                     code=ErrorCode.E_STT_FAILED,
                     message=str(stt_err),
@@ -527,7 +625,33 @@ async def voco_stream(websocket: WebSocket) -> None:
                 return
 
             logger.info("[Pipeline] Transcript: %s", transcript)
+
+            # Wake word gate: ignore speech not directed at Voco (skip in bridge mode)
+            if not voice_bridge.in_bridge_mode and _wake_word_required:
+                transcript_lower = transcript.lower()
+                if not any(w in transcript_lower for w in _WAKE_WORDS):
+                    logger.info("[Pipeline] No wake word detected — ignoring ambient speech")
+                    _turn_in_progress = False
+                    return
+                # Strip the wake word prefix so Claude gets clean input
+                for w in _WAKE_WORDS:
+                    idx = transcript_lower.find(w)
+                    if idx != -1:
+                        transcript = transcript[idx + len(w):].strip(" ,.")
+                        break
+                if not transcript or len(transcript.strip()) < 2:
+                    logger.info("[Pipeline] Wake word only, no command — ignoring")
+                    _turn_in_progress = False
+                    return
+
             await websocket.send_json({"type": "transcript", "text": transcript})
+
+            # Bridge mode: route transcript to MCP client instead of LangGraph
+            if voice_bridge.in_bridge_mode:
+                logger.info("[Pipeline] Bridge mode — routing transcript to MCP client")
+                voice_bridge.resolve_transcript(transcript)
+                _turn_in_progress = False
+                return
 
         # --- Step 2: Run LangGraph (Claude 3.5 Sonnet) ---
         await _send_ledger_update(domain="general", context_router="active", orchestrator="pending", tools="pending")
@@ -1362,17 +1486,37 @@ async def voco_stream(websocket: WebSocket) -> None:
 
             if "bytes" in message:
                 chunk = message["bytes"]
-                # Skip VAD processing while TTS is active (prevents echo feedback)
+                # During voice bridge TTS: run VAD with stricter thresholds for barge-in
+                if voice_bridge._tts_playing:
+                    vad._bridge_barge_in_mode = True
+                    await vad.process_chunk(chunk)
+                    continue
+                vad._bridge_barge_in_mode = False
+                # Skip VAD processing while normal TTS is active (prevents echo feedback)
                 if tts_active:
                     continue
                 audio_buffer.extend(chunk)
+                # Feed audio to streaming STT for real-time interim transcripts
+                if streaming_stt:
+                    await streaming_stt.feed(chunk)
+                elif not _speech_active and len(audio_buffer) > 1024:
+                    # Start streaming on first substantial audio (VAD hasn't fired barge_in yet)
+                    _speech_active = True
+                    await _start_streaming_stt()
+                    if streaming_stt:
+                        # Feed buffered audio so far
+                        await streaming_stt.feed(bytes(audio_buffer))
                 await vad.process_chunk(chunk)
             elif "text" in message:
                 try:
                     payload = json.loads(message["text"])
                     msg_type = payload.get("type", "")
 
-                    if msg_type == "text_input":
+                    if msg_type == "bridge_barge_in":
+                        # User clicked orb to interrupt voice bridge TTS
+                        voice_bridge.trigger_barge_in()
+                        logger.info("[WS] Bridge barge-in from user (orb click)")
+                    elif msg_type == "text_input":
                         # "Type instead" path — bypass STT, feed directly into LangGraph.
                         text = payload.get("text", "").strip()
                         if text:
@@ -1462,6 +1606,10 @@ async def voco_stream(websocket: WebSocket) -> None:
                         for k, v in env_patch.items():
                             if k in _ALLOWED_ENV_KEYS and isinstance(v, str) and v:
                                 os.environ[k] = v
+                        # Toggle wake word requirement from settings
+                        if "wake_word" in env_patch:
+                            _wake_word_required = str(env_patch["wake_word"]).lower() not in ("false", "0", "off", "disabled")
+                            logger.info("[WS] Wake word requirement: %s", _wake_word_required)
                         logger.info("[WS] Environment updated: %s", list(env_patch.keys()))
                     elif msg_type == "cancel_job":
                         cancel_id = payload.get("job_id", "")
@@ -1499,6 +1647,7 @@ async def voco_stream(websocket: WebSocket) -> None:
             pass
     finally:
         cleanup_task.cancel()
+        voice_bridge.unregister_ws(websocket)
         logger.info(
             "[Session] %s closed — turns=%d rpcs=%d timeouts=%d",
             thread_id,

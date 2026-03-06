@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { VocoSettings } from "@/hooks/use-settings";
-import { TTS_VOICES } from "@/hooks/use-settings";
+import { TTS_VOICES, STT_PROVIDERS, WHISPER_MODELS } from "@/hooks/use-settings";
 import { openExternalLink, EXTERNAL_LINKS } from "@/lib/external-links";
 import {
   type KeybindingAction,
@@ -239,6 +239,88 @@ export function SettingsModal({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          {/* STT Provider */}
+          <div className="space-y-2">
+            <Label htmlFor="stt-provider" className="text-sm font-medium text-zinc-300">
+              Speech Recognition
+            </Label>
+            <Select
+              value={settings.STT_PROVIDER}
+              onValueChange={(v) => onUpdate("STT_PROVIDER", v as VocoSettings["STT_PROVIDER"])}
+            >
+              <SelectTrigger
+                id="stt-provider"
+                className="bg-zinc-900 border-zinc-700 text-zinc-100"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-zinc-900 border-zinc-700">
+                {STT_PROVIDERS.map((p) => (
+                  <SelectItem key={p.value} value={p.value} className="text-zinc-100">
+                    <span>{p.label}</span>
+                    <span className="ml-2 text-zinc-500 text-xs">{p.description}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Whisper Model — only shown when local STT is selected */}
+          {settings.STT_PROVIDER === "whisper-local" && (
+            <div className="space-y-2 pl-2 border-l-2 border-voco-cyan/20">
+              <Label htmlFor="whisper-model" className="text-sm font-medium text-zinc-300">
+                Whisper Model
+              </Label>
+              <p className="text-xs text-zinc-500">
+                Larger models are more accurate but slower. Downloads automatically on first use.
+              </p>
+              <Select
+                value={settings.WHISPER_MODEL}
+                onValueChange={(v) => onUpdate("WHISPER_MODEL", v)}
+              >
+                <SelectTrigger
+                  id="whisper-model"
+                  className="bg-zinc-900 border-zinc-700 text-zinc-100"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-900 border-zinc-700">
+                  {WHISPER_MODELS.map((m) => (
+                    <SelectItem key={m.value} value={m.value} className="text-zinc-100">
+                      <span>{m.label}</span>
+                      <span className="ml-2 text-zinc-500 text-xs">{m.size} · {m.speed}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Wake Word */}
+          <div className="flex items-center justify-between py-1">
+            <div>
+              <Label className="text-sm font-medium text-zinc-300">
+                Wake Word — "Hey Voco"
+              </Label>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Only respond when you say "Hey Voco" first. Prevents picking up ambient speech.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onUpdate("WAKE_WORD", !settings.WAKE_WORD)}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                settings.WAKE_WORD ? "bg-voco-cyan" : "bg-zinc-700"
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  settings.WAKE_WORD ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
           </div>
         </div>
 

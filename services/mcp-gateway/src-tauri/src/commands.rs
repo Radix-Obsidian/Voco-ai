@@ -2,7 +2,94 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
+
+// ---------------------------------------------------------------------------
+// Window management — orb / main show/hide
+// ---------------------------------------------------------------------------
+
+/// Show the main window and hide the floating orb.
+#[tauri::command]
+pub async fn show_main_window(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("main") {
+        w.show().map_err(|e| e.to_string())?;
+        w.set_focus().map_err(|e| e.to_string())?;
+    }
+    if let Some(orb) = app.get_webview_window("orb") {
+        orb.hide().ok();
+    }
+    Ok(())
+}
+
+/// Hide the main window and show the floating orb.
+#[tauri::command]
+pub async fn hide_main_window(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("main") {
+        w.hide().map_err(|e| e.to_string())?;
+    }
+    if let Some(orb) = app.get_webview_window("orb") {
+        orb.show().ok();
+    }
+    Ok(())
+}
+
+/// Quit the entire application.
+#[tauri::command]
+pub async fn quit_app(app: AppHandle) -> Result<(), String> {
+    app.exit(0);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// System-wide dictation — OS keyboard simulation via enigo
+// ---------------------------------------------------------------------------
+
+/// Type a string into the currently focused OS input field.
+#[tauri::command]
+pub async fn type_text(text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        use enigo::{Enigo, Keyboard, Settings};
+        let mut enigo = Enigo::new(&Settings::default())
+            .map_err(|e| format!("Enigo init failed: {e}"))?;
+        enigo.text(&text).map_err(|e| format!("Type failed: {e}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Spawn blocking failed: {e}"))?
+}
+
+/// Diff-based update: backspace stale chars, type new suffix.
+/// Used for real-time interim transcript updates to avoid retyping the whole string.
+#[tauri::command]
+pub async fn type_diff(previous: String, current: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        use enigo::{Enigo, Key, Keyboard, Direction, Settings};
+        let mut enigo = Enigo::new(&Settings::default())
+            .map_err(|e| format!("Enigo init failed: {e}"))?;
+
+        let common = previous
+            .chars()
+            .zip(current.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        // Backspace to remove diverging suffix
+        for _ in 0..(previous.chars().count() - common) {
+            enigo
+                .key(Key::Backspace, Direction::Click)
+                .map_err(|e| format!("Backspace failed: {e}"))?;
+        }
+        // Type new suffix
+        let suffix: String = current.chars().skip(common).collect();
+        if !suffix.is_empty() {
+            enigo.text(&suffix).map_err(|e| format!("Type failed: {e}"))?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Spawn blocking failed: {e}"))?
+}
 
 // ---------------------------------------------------------------------------
 // IDE Auto-Config
@@ -31,7 +118,6 @@ pub struct VocoApiKeys {
 /// Persist API keys to `{app_config_dir}/config.json`.
 #[tauri::command]
 pub async fn save_api_keys(app: AppHandle, keys: VocoApiKeys) -> Result<(), String> {
-    use tauri::Manager;
     let config_dir = app
         .path()
         .app_config_dir()
@@ -49,7 +135,6 @@ pub async fn save_api_keys(app: AppHandle, keys: VocoApiKeys) -> Result<(), Stri
 /// Returns defaults (empty strings) if the file doesn't exist yet.
 #[tauri::command]
 pub async fn load_api_keys(app: AppHandle) -> Result<VocoApiKeys, String> {
-    use tauri::Manager;
     let config_path = app
         .path()
         .app_config_dir()
