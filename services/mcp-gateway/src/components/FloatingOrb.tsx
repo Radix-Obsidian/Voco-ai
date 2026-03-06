@@ -116,7 +116,7 @@ export function FloatingOrb() {
                 ? state.dictationMode === "app"
                   ? "animate-orb-listening shadow-[0_0_25px_rgba(59,130,246,0.5)]"
                   : "animate-orb-listening shadow-[0_0_25px_rgba(239,68,68,0.5)]"
-                : "animate-orb-pulse shadow-voco-glow hover:shadow-voco-glow-lg"
+                : "hover:shadow-voco-glow"
               }
               ${state.bargeInActive ? "!shadow-[0_0_30px_rgba(239,68,68,0.5)]" : ""}
               ${state.bridgeTtsActive ? "!shadow-[0_0_20px_rgba(59,130,246,0.5)] animate-pulse" : ""}
@@ -129,14 +129,14 @@ export function FloatingOrb() {
                   ? state.dictationMode === "app"
                     ? "border-blue-500/40 bg-blue-500/[0.08]"
                     : "border-red-500/40 bg-red-500/[0.08]"
-                  : "border-voco-green/30 bg-voco-green/[0.04]"
+                  : "border-white/[0.04] bg-transparent"
                 }
               `}
             />
             <img
               src={vocoIcon}
               alt="Voco"
-              className={`w-6 h-6 relative z-10 transition-opacity duration-300 ${state.isListening ? "opacity-100" : "opacity-80"}`}
+              className={`w-6 h-6 relative z-10 transition-opacity duration-300 ${state.isListening ? "opacity-100" : "opacity-40"}`}
             />
           </button>
         </div>
