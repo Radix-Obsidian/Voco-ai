@@ -1,9 +1,9 @@
 """Stripe billing — Seat + Meter hybrid model.
 
 Seat  : Fixed monthly subscription fee per user  (STRIPE_PRO_PRICE_ID).
-Meter : Pay-per-voice-turn usage billing          (STRIPE_METER_PRICE_ID, usage_type=metered).
+Meter : Pay-per-turn usage billing                (STRIPE_METER_PRICE_ID, usage_type=metered).
 
-Every completed voice turn calls ``report_voice_turn()`` which increments the
+Every completed turn calls ``report_turn()`` which increments the
 Stripe usage record by 1.  The Stripe invoice at month-end = seat fee + (turns × meter rate).
 
 Environment variables:
@@ -89,10 +89,10 @@ async def create_checkout_session(req: CheckoutRequest) -> dict:
 
     Line items:
       1. Seat  — flat monthly fee           (STRIPE_PRO_PRICE_ID, quantity=1)
-      2. Meter — per voice-turn usage fee   (STRIPE_METER_PRICE_ID, no quantity)
+      2. Meter — per-turn usage fee          (STRIPE_METER_PRICE_ID, no quantity)
 
     The meter price must be created in Stripe with ``usage_type=metered``.
-    Usage is reported programmatically via ``report_voice_turn()`` after each turn.
+    Usage is reported programmatically via ``report_turn()`` after each turn.
     """
     _require_stripe()
 

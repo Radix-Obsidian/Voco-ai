@@ -13,8 +13,6 @@ Available tools:
   voco_search_web        — Tavily web search
   voco_read_github_issue — Read a GitHub issue
   voco_ask               — Full LangGraph reasoning (requires ANTHROPIC_API_KEY or LiteLLM gateway)
-  voco_voice_input       — Activate mic, return STT transcript (requires Voco desktop app)
-  voco_speak             — Text-to-speech via Cartesia (requires Voco desktop app)
 """
 
 from __future__ import annotations
