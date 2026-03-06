@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import AsyncGenerator
 
 logger = logging.getLogger(__name__)
@@ -19,8 +20,8 @@ class DeepgramStreamingSession:
 
     WS_URL = "wss://api.deepgram.com/v1/listen"
 
-    def __init__(self, api_key: str, sample_rate: int = 16_000) -> None:
-        self._api_key = api_key
+    def __init__(self, api_key: str | None = None, sample_rate: int = 16_000) -> None:
+        self._explicit_key = api_key or None
         self._sample_rate = sample_rate
         self._ws = None
         self._send_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
@@ -28,6 +29,11 @@ class DeepgramStreamingSession:
         self._final_parts: list[str] = []
         self._tasks: list[asyncio.Task] = []
         self._closed = False
+
+    @property
+    def _api_key(self) -> str:
+        """Resolve API key: explicit > env var > empty."""
+        return self._explicit_key or os.environ.get("DEEPGRAM_API_KEY", "")
 
     async def start(self) -> None:
         """Open Deepgram streaming WS. Call once per turn (on speech onset)."""
@@ -251,17 +257,24 @@ class DeepgramSTT:
 
     Parameters
     ----------
-    api_key : str
-        Deepgram API key (from DEEPGRAM_API_KEY env var).
+    api_key : str | None
+        Deepgram API key. If ``None`` (default), reads ``DEEPGRAM_API_KEY``
+        from ``os.environ`` at transcription time so hot-swapped keys take
+        effect immediately.
     sample_rate : int
         Sample rate of the incoming PCM stream (default 16 kHz).
     """
 
     WS_URL = "wss://api.deepgram.com/v1/listen"
 
-    def __init__(self, api_key: str, *, sample_rate: int = 16_000) -> None:
-        self._api_key = api_key
+    def __init__(self, api_key: str | None = None, *, sample_rate: int = 16_000) -> None:
+        self._explicit_key = api_key or None
         self._sample_rate = sample_rate
+
+    @property
+    def _api_key(self) -> str:
+        """Resolve API key: explicit > env var > empty."""
+        return self._explicit_key or os.environ.get("DEEPGRAM_API_KEY", "")
 
     async def transcribe_once(self, audio_bytes: bytes, max_retries: int = 2) -> str:
         """Send a complete audio buffer to Deepgram and return the transcript.

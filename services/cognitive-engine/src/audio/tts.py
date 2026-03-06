@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import uuid
 from typing import AsyncGenerator
 
@@ -20,8 +21,10 @@ class CartesiaTTS:
 
     Parameters
     ----------
-    api_key : str
-        Cartesia API key (from CARTESIA_API_KEY env var).
+    api_key : str | None
+        Cartesia API key. If ``None`` (default), reads ``CARTESIA_API_KEY``
+        from ``os.environ`` at synthesis time so hot-swapped keys take effect
+        immediately without reconnecting.
     voice_id : str
         Cartesia voice ID to use for synthesis.
     sample_rate : int
@@ -30,17 +33,23 @@ class CartesiaTTS:
 
     WS_URL = "wss://api.cartesia.ai/tts/websocket"
     API_VERSION = "2025-04-16"
+    MAX_RETRIES = 2
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None = None,
         *,
         voice_id: str = _DEFAULT_VOICE_ID,
         sample_rate: int = 16_000,
     ) -> None:
-        self._api_key = api_key
+        self._explicit_key = api_key or None
         self._voice_id = voice_id
         self._sample_rate = sample_rate
+
+    @property
+    def _api_key(self) -> str:
+        """Resolve API key: explicit > env var > empty."""
+        return self._explicit_key or os.environ.get("CARTESIA_API_KEY", "")
 
     async def synthesize(self, text: str) -> bytes:
         """Synthesize *text* and return the complete PCM-16 audio as bytes."""
@@ -53,13 +62,56 @@ class CartesiaTTS:
         """Synthesize *text* and yield PCM-16 audio chunks as they arrive.
 
         Uses Cartesia's WebSocket streaming endpoint for sub-100ms TTFB.
+        Retries up to MAX_RETRIES times on transient failures (zero chunks,
+        connection drops) before giving up.
         """
-        if not self._api_key:
+        api_key = self._api_key
+        if not api_key:
             raise ValueError("CARTESIA_API_KEY is empty — cannot synthesize audio. Set it in Settings or .env.")
 
+        last_error: Exception | None = None
+
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            chunk_count = 0
+            try:
+                async for chunk in self._do_synthesize(api_key, text):
+                    chunk_count += 1
+                    yield chunk
+
+                if chunk_count > 0:
+                    return  # Success
+                else:
+                    logger.warning(
+                        "[TTS] Attempt %d/%d: zero audio chunks returned for %.50s...",
+                        attempt, self.MAX_RETRIES, text,
+                    )
+                    last_error = RuntimeError("Cartesia returned zero audio chunks")
+            except websockets.exceptions.InvalidStatusCode as exc:
+                logger.error(
+                    "[TTS] Attempt %d/%d: Cartesia rejected connection (HTTP %s) — key may be invalid.",
+                    attempt, self.MAX_RETRIES, exc.status_code,
+                )
+                last_error = exc
+            except Exception as exc:
+                logger.error(
+                    "[TTS] Attempt %d/%d: WebSocket error: %s",
+                    attempt, self.MAX_RETRIES, exc,
+                )
+                last_error = exc
+
+            # If we already yielded some chunks, don't retry (partial audio is worse than none)
+            if chunk_count > 0:
+                return
+
+        # All retries exhausted
+        if last_error:
+            raise last_error
+
+    async def _do_synthesize(self, api_key: str, text: str) -> AsyncGenerator[bytes, None]:
+        """Single synthesis attempt — opens a fresh WebSocket connection."""
         ws_url = (
             f"{self.WS_URL}"
-            f"?api_key={self._api_key}"
+            f"?api_key={api_key}"
             f"&cartesia_version={self.API_VERSION}"
         )
 
@@ -81,40 +133,36 @@ class CartesiaTTS:
             "continue": False,
         })
 
-        try:
-            async with websockets.connect(ws_url) as ws:
-                await ws.send(payload)
-                logger.info("[TTS] Synthesizing: %.80s...", text)
+        async with websockets.connect(ws_url) as ws:
+            await ws.send(payload)
+            logger.info("[TTS] Synthesizing (req %s): %.80s...", request_id[:8], text)
 
-                async for raw in ws:
-                    # Cartesia sends JSON text frames per official docs.
-                    # Binary frames are also accepted as a fallback.
-                    if isinstance(raw, bytes):
-                        yield raw
-                        continue
+            async for raw in ws:
+                # Cartesia sends JSON text frames per official docs.
+                # Binary frames are also accepted as a fallback.
+                if isinstance(raw, bytes):
+                    yield raw
+                    continue
 
-                    try:
-                        msg = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    logger.warning("[TTS] Non-JSON frame: %.200s", raw)
+                    continue
 
-                    msg_type = msg.get("type", "")
-                    if msg_type == "chunk" and "data" in msg:
-                        # Official format: {"type": "chunk", "data": "<base64>"}
-                        yield base64.b64decode(msg["data"])
-                    elif msg_type == "done":
-                        logger.debug("[TTS] Stream complete for request %s", request_id)
-                        break
-                    elif msg_type == "error":
-                        logger.error("[TTS] Cartesia error: %s", msg.get("error", msg))
-                        break
-                    elif "data" in msg:
-                        # Legacy fallback: base64 data without type field
-                        yield base64.b64decode(msg["data"])
-
-        except websockets.exceptions.InvalidStatusCode as exc:
-            logger.error("[TTS] Cartesia rejected connection (status %s) — check CARTESIA_API_KEY.", exc.status_code)
-            raise
-        except Exception as exc:
-            logger.error("[TTS] WebSocket error: %s", exc)
-            raise
+                msg_type = msg.get("type", "")
+                if msg_type == "chunk" and "data" in msg:
+                    # Official format: {"type": "chunk", "data": "<base64>"}
+                    yield base64.b64decode(msg["data"])
+                elif msg_type == "done":
+                    logger.debug("[TTS] Stream complete for request %s", request_id[:8])
+                    break
+                elif msg_type == "error":
+                    error_detail = msg.get("error", msg.get("message", msg))
+                    logger.error("[TTS] Cartesia error response: %s", error_detail)
+                    raise RuntimeError(f"Cartesia API error: {error_detail}")
+                elif "data" in msg:
+                    # Legacy fallback: base64 data without type field
+                    yield base64.b64decode(msg["data"])
+                else:
+                    logger.debug("[TTS] Unknown message type: %s", msg)

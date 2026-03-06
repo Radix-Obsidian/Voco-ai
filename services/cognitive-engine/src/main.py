@@ -373,8 +373,8 @@ async def voco_stream(websocket: WebSocket) -> None:
         silence_frames_for_turn_end=SILENCE_FRAMES_FOR_TURN_END,
     )
 
-    stt = DeepgramSTT(api_key=os.environ.get("DEEPGRAM_API_KEY", ""))
-    tts = CartesiaTTS(api_key=os.environ.get("CARTESIA_API_KEY", ""))
+    stt = DeepgramSTT()   # reads DEEPGRAM_API_KEY from os.environ at call time
+    tts = CartesiaTTS()   # reads CARTESIA_API_KEY from os.environ at call time
 
     # Register with the voice bridge so MCP clients (Claude Code) can use mic/TTS
     from src.voice_bridge import voice_bridge
@@ -414,10 +414,9 @@ async def voco_stream(websocket: WebSocket) -> None:
                 await streaming_stt.start()
                 logger.info("[StreamSTT] Using local Whisper (%s)", model_size)
             else:
-                dg_key = os.environ.get("DEEPGRAM_API_KEY", "")
-                if not dg_key:
+                if not os.environ.get("DEEPGRAM_API_KEY", ""):
                     return
-                streaming_stt = DeepgramStreamingSession(api_key=dg_key)
+                streaming_stt = DeepgramStreamingSession()
                 await streaming_stt.start()
                 logger.info("[StreamSTT] Using Deepgram cloud")
             _interim_relay_task = asyncio.create_task(_relay_interims())
@@ -1314,10 +1313,10 @@ async def voco_stream(websocket: WebSocket) -> None:
                 chunk_count += 1
             logger.info("[TTS] Sent %d audio chunks to frontend.", chunk_count)
             if chunk_count == 0:
-                logger.warning("[TTS] Zero audio chunks — Cartesia may have rejected the request.")
+                logger.warning("[TTS] Zero audio chunks after retries — check Cartesia key and voice ID.")
                 await send_error(websocket, VocoError(
                     code=ErrorCode.E_TTS_FAILED,
-                    message="Voice synthesis returned no audio — your Cartesia API key may be expired.",
+                    message="Voice synthesis returned no audio after retries — check your Cartesia API key in Settings.",
                 ))
         except Exception as tts_exc:
             logger.error("[TTS] Synthesis failed: %s", tts_exc)

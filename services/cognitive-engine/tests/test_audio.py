@@ -199,33 +199,36 @@ class TestCartesiaTTSResponseParsing:
 
     @pytest.mark.asyncio
     async def test_handles_error_response(self):
-        """Cartesia error: {"type": "error", "error": "..."}."""
+        """Cartesia error: {"type": "error", "error": "..."} raises RuntimeError after retries."""
         tts = CartesiaTTS(api_key="test-key")
 
         messages = [
             json.dumps({"type": "error", "error": "Rate limit exceeded", "status_code": 429}),
         ]
 
-        async_messages = _AsyncIter(messages)
-        mock_ws = AsyncMock()
-        mock_ws.send = AsyncMock()
-        mock_ws.__aiter__ = lambda self: async_messages
-        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
-        mock_ws.__aexit__ = AsyncMock(return_value=False)
+        def _make_mock_ws():
+            async_messages = _AsyncIter(list(messages))
+            mock_ws = AsyncMock()
+            mock_ws.send = AsyncMock()
+            mock_ws.__aiter__ = lambda self: async_messages
+            mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+            mock_ws.__aexit__ = AsyncMock(return_value=False)
+            return mock_ws
 
-        with patch("websockets.connect", return_value=mock_ws):
-            chunks = []
-            async for chunk in tts.synthesize_stream("Hello"):
-                chunks.append(chunk)
-
-        assert chunks == []
+        with patch("websockets.connect", side_effect=lambda *a, **kw: _make_mock_ws()):
+            with pytest.raises(RuntimeError, match="Cartesia API error"):
+                async for _ in tts.synthesize_stream("Hello"):
+                    pass
 
     @pytest.mark.asyncio
     async def test_payload_uses_sonic_3_model(self):
         """BUG-1 regression: verify the WebSocket payload sends model_id 'sonic-3'."""
         tts = CartesiaTTS(api_key="test-key")
 
+        pcm_audio = b"\x00\x01" * 50
+        b64_data = base64.b64encode(pcm_audio).decode()
         messages = [
+            json.dumps({"type": "chunk", "data": b64_data}),
             json.dumps({"type": "done", "done": True, "status_code": 206}),
         ]
 
