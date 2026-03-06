@@ -10,7 +10,7 @@ interface OrbState {
   dictationMode: "voco" | "app";
 }
 
-const DRAG_THRESHOLD = 4; // px of movement before we switch from click → drag
+const DRAG_THRESHOLD = 4;
 
 export function FloatingOrb() {
   const [state, setState] = useState<OrbState>({
@@ -23,8 +23,8 @@ export function FloatingOrb() {
   });
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const draggingRef = useRef(false);
-  const mouseOriginRef = useRef<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{ startX: number; startY: number; winX: number; winY: number; dragging: boolean } | null>(null);
+  const wasDragging = useRef(false);
 
   // Listen for state updates from the main window
   useEffect(() => {
@@ -51,47 +51,53 @@ export function FloatingOrb() {
     return () => document.removeEventListener("mousedown", handler);
   }, [showMenu]);
 
-  // Click-vs-drag: track mouseDown origin, start OS drag only after threshold
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return; // left-click only
-    draggingRef.current = false;
-    mouseOriginRef.current = { x: e.screenX, y: e.screenY };
+  // Pointer-capture drag — keeps events flowing even when pointer leaves the 48px window
+  const handlePointerDown = useCallback(async (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    const pos = await win.outerPosition();
+    dragRef.current = {
+      startX: e.screenX,
+      startY: e.screenY,
+      winX: pos.x,
+      winY: pos.y,
+      dragging: false,
+    };
   }, []);
 
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      const origin = mouseOriginRef.current;
-      if (!origin || draggingRef.current) return;
+  const handlePointerMove = useCallback(async (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
 
-      const dx = Math.abs(e.screenX - origin.x);
-      const dy = Math.abs(e.screenY - origin.y);
-      if (dx > DRAG_THRESHOLD || dy > DRAG_THRESHOLD) {
-        draggingRef.current = true;
-        mouseOriginRef.current = null;
-        import("@tauri-apps/api/window").then(({ getCurrentWindow }) => {
-          getCurrentWindow().startDragging();
-        });
-      }
-    };
+    const dx = e.screenX - d.startX;
+    const dy = e.screenY - d.startY;
 
-    const onUp = () => {
-      mouseOriginRef.current = null;
-    };
+    if (!d.dragging) {
+      if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+      d.dragging = true;
+    }
 
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const { LogicalPosition } = await import("@tauri-apps/api/dpi");
+    const win = getCurrentWindow();
+    const sf = await win.scaleFactor();
+    await win.setPosition(new LogicalPosition(
+      (d.winX + dx) / sf,
+      (d.winY + dy) / sf,
+    ));
+  }, []);
+
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    wasDragging.current = dragRef.current?.dragging ?? false;
+    dragRef.current = null;
   }, []);
 
   const handleClick = useCallback(() => {
-    // If we just finished a drag, don't fire the click action
-    if (draggingRef.current) {
-      draggingRef.current = false;
-      return;
-    }
+    // If we just finished a drag, don't fire click
+    if (wasDragging.current) { wasDragging.current = false; return; }
     import("@tauri-apps/api/event").then(({ emit }) => {
       if (state.bridgeTtsActive) {
         emit("voco://orb-barge-in", {});
@@ -132,7 +138,9 @@ export function FloatingOrb() {
 
   return (
     <div
-      onMouseDown={handleMouseDown}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
       onContextMenu={handleContextMenu}
       className="fixed inset-0 flex items-center justify-center cursor-grab active:cursor-grabbing"
       style={{ background: "transparent" }}
