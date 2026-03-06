@@ -28,7 +28,7 @@ export function useBackendReady() {
     if (!isTauri()) {
       // Running in plain browser (e.g. Vite dev server without Tauri)
       // — assume backend is managed externally and skip gating.
-      setStatus({ engine_ready: true, litellm_ready: true, error: null });
+      setStatus({ engine_ready: true, litellm_ready: true, error: null, setup_message: null });
       setChecking(false);
       return;
     }

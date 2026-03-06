@@ -287,6 +287,9 @@ export function useDemoMode() {
     setSandboxUrl,
     sendAuthSync,
     liveTranscript,
+    interimTranscript: "",
+    dictationMode: "voco" as const,
+    setDictationMode: () => {},
     claudeCodeDelegation,
   };
 }
